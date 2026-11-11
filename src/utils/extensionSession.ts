@@ -5,6 +5,7 @@ import type {
   UniversityLogoMap,
   WorkbookSession,
 } from '../types/course';
+import { base64ToUint8Bytes, uint8BytesToBase64 } from './base64';
 
 const EXTENSION_SESSION_KEY = 'eccho_converter_session_v1';
 
@@ -40,6 +41,9 @@ interface SerializedLogo {
   fileName: string;
   mimeType: 'image/png' | 'image/jpeg';
   base64: string;
+  needsDarkBackdrop?: boolean;
+  pixelWidth?: number;
+  pixelHeight?: number;
 }
 
 export interface PersistedExtensionSession {
@@ -52,26 +56,13 @@ export interface PersistedExtensionSession {
   customBrandLogo: SerializedLogo | null;
   customUniversityLogos: Record<
     string,
-    { universityName: string; source: 'uploaded' | 'fetched'; logo: SerializedLogo }
+    {
+      universityName: string;
+      source: 'uploaded' | 'discovered';
+      logoSourceUrl?: string | null;
+      logo: SerializedLogo;
+    }
   >;
-}
-
-function uint8ToBase64(bytes: Uint8Array): string {
-  let binary = '';
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-  }
-  return btoa(binary);
-}
-
-function base64ToUint8(b64: string): Uint8Array {
-  const binary = atob(b64);
-  const out = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    out[i] = binary.charCodeAt(i);
-  }
-  return out;
 }
 
 export function serializeInMemoryLogo(logo: InMemoryLogo | null): SerializedLogo | null {
@@ -79,13 +70,16 @@ export function serializeInMemoryLogo(logo: InMemoryLogo | null): SerializedLogo
   return {
     fileName: logo.fileName,
     mimeType: logo.mimeType,
-    base64: uint8ToBase64(logo.bytes),
+    base64: uint8BytesToBase64(logo.bytes),
+    needsDarkBackdrop: logo.needsDarkBackdrop,
+    pixelWidth: logo.pixelWidth,
+    pixelHeight: logo.pixelHeight,
   };
 }
 
 export function deserializeInMemoryLogo(raw: SerializedLogo | null): InMemoryLogo | null {
   if (!raw) return null;
-  const bytes = base64ToUint8(raw.base64);
+  const bytes = base64ToUint8Bytes(raw.base64);
   const previewUrl = URL.createObjectURL(
     new Blob([new Uint8Array(bytes)], { type: raw.mimeType }),
   );
@@ -94,6 +88,9 @@ export function deserializeInMemoryLogo(raw: SerializedLogo | null): InMemoryLog
     mimeType: raw.mimeType,
     bytes,
     previewUrl,
+    needsDarkBackdrop: raw.needsDarkBackdrop,
+    pixelWidth: raw.pixelWidth,
+    pixelHeight: raw.pixelHeight,
   };
 }
 
@@ -122,12 +119,13 @@ export async function saveExtensionSessionState(params: {
 
   const customUniversityLogos: PersistedExtensionSession['customUniversityLogos'] = {};
   for (const [key, entry] of Object.entries(params.universityLogos)) {
-    if ((entry.source === 'uploaded' || entry.source === 'fetched') && entry.logo) {
+    if ((entry.source === 'uploaded' || entry.source === 'discovered') && entry.logo) {
       const serialized = serializeInMemoryLogo(entry.logo);
       if (serialized) {
         customUniversityLogos[key] = {
           universityName: entry.universityName,
           source: entry.source,
+          logoSourceUrl: entry.logoSourceUrl,
           logo: serialized,
         };
       }

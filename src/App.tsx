@@ -66,12 +66,20 @@ import {
   saveExtensionSessionState,
 } from './utils/extensionSession';
 import { loadLogoInMemory, revokeLogoPreviewUrl } from './utils/logoLoader';
+import { inspectProcessedLogoPixels } from './utils/logoProcessor';
 import { generateCourseShortlistPdf } from './utils/pdfGenerator';
 import {
-  attemptWebsiteLogoLookup,
+  applyCandidateSelection,
+  collectPendingHostOrigins,
+  discoverSingleUniversityEntry,
+  fetchPendingExternalHostCandidate,
+  findAlreadyPermittedUniversityKeys,
   getUniversityInitials,
-  resolveUniversityLogosForCourses,
+  initializeUniversityLogosForCourses,
+  requestHostPermissionsSync,
+  revokeEntryCandidateUrls,
   revokeUniversityLogoUrls,
+  runWithConcurrencyLimit,
 } from './utils/universityLogos';
 import {
   NOT_SPECIFIED,
@@ -100,23 +108,66 @@ interface PdfMeta {
 function UniversityLogoBox({
   entry,
   universityName,
+  overrideLogo,
 }: {
   entry?: UniversityLogoEntry;
   universityName: string;
+  overrideLogo?: InMemoryLogo | null;
 }) {
+  const logoToUse = overrideLogo ?? entry?.logo ?? null;
   const initials = entry?.initials ?? getUniversityInitials(universityName);
+  const darkClass = logoToUse?.needsDarkBackdrop ? ' is-dark-backdrop' : '';
   return (
-    <div className="univ-logo-frame">
-      {entry?.logo ? (
-        <img
-          src={entry.logo.previewUrl}
-          alt={`${universityName} logo`}
-        />
+    <div className={`univ-logo-frame${darkClass}`}>
+      {logoToUse ? (
+        <img src={logoToUse.previewUrl} alt={`${universityName} logo`} />
       ) : (
-        <span className="univ-logo-initials" aria-label={`${universityName} initials`}>
+        <span
+          className="univ-logo-initials"
+          aria-label={`${universityName} initials`}
+        >
           {initials}
         </span>
       )}
+    </div>
+  );
+}
+
+function CandidatePickerGrid({
+  entry,
+  universityName,
+  ariaLabel,
+  onSelect,
+}: {
+  entry: UniversityLogoEntry;
+  universityName: string;
+  ariaLabel: string;
+  onSelect: (candidateId: string) => void;
+}) {
+  if (!entry.candidates || entry.candidates.length === 0) return null;
+  return (
+    <div className="candidate-picker-grid" role="group" aria-label={ariaLabel}>
+      {entry.candidates.map((cand) => (
+        <button
+          key={cand.id}
+          type="button"
+          className={`candidate-option-btn${
+            entry.logo?.previewUrl === cand.logo.previewUrl ? ' is-selected' : ''
+          }`}
+          onClick={() => onSelect(cand.id)}
+        >
+          <UniversityLogoBox
+            universityName={universityName}
+            overrideLogo={cand.logo}
+          />
+          <span className="candidate-option-meta">
+            {cand.sourceLabel}
+            {cand.logo.pixelWidth && cand.logo.pixelHeight
+              ? ` (${cand.logo.pixelWidth}×${cand.logo.pixelHeight})`
+              : ''}
+          </span>
+        </button>
+      ))}
     </div>
   );
 }
@@ -168,7 +219,6 @@ export function App() {
     null,
   );
   const [universityLogos, setUniversityLogos] = useState<UniversityLogoMap>({});
-  const [lookingUpUnivKey, setLookingUpUnivKey] = useState<string | null>(null);
 
   const [activeSection, setActiveSection] = useState<ActiveSection>({
     kind: 'summary',
@@ -177,6 +227,7 @@ export function App() {
   const [activePdfPage, setActivePdfPage] = useState<number>(1);
   const [pdfMeta, setPdfMeta] = useState<PdfMeta | null>(null);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState<boolean>(false);
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState<boolean>(false);
@@ -188,6 +239,8 @@ export function App() {
 
   const customBrandLogoRef = useRef<InMemoryLogo | null>(null);
   const universityLogosRef = useRef<UniversityLogoMap>({});
+  const resetEpochRef = useRef<number>(0);
+  const univRunTokensRef = useRef<Record<string, number>>({});
   customBrandLogoRef.current = customBrandLogo;
   universityLogosRef.current = universityLogos;
 
@@ -267,18 +320,23 @@ export function App() {
                 universityKey: key,
                 universityName: entry.universityName,
                 websiteHref: null,
+                normalizedWebsiteUrl: null,
+                finalWebsiteUrl: null,
                 domain: null,
+                requiredHostOrigins: [],
                 initials: getUniversityInitials(entry.universityName),
                 source: entry.source,
+                status: 'found',
                 logo: deserialized,
-                lookupNote:
+                logoSourceUrl: entry.logoSourceUrl ?? null,
+                statusMessage:
                   entry.source === 'uploaded'
                     ? 'Custom uploaded logo'
-                    : 'Fetched from university website',
+                    : 'Discovered from university website',
               };
             }
           }
-          const resolvedLogos = await resolveUniversityLogosForCourses(
+          const initializedLogos = initializeUniversityLogosForCourses(
             parsedCourses,
             seedMap,
           );
@@ -286,7 +344,7 @@ export function App() {
             setWorkbookSession(saved.workbookSession);
             setSelectedSheet(saved.selectedSheet);
             setCourses(parsedCourses);
-            setUniversityLogos(resolvedLogos);
+            setUniversityLogos(initializedLogos);
             setActivePdfPage(Math.max(1, saved.activePageNumber || 1));
           }
         } catch {
@@ -397,12 +455,77 @@ export function App() {
     customBrandLogo,
   ]);
 
+  const runDiscoveryForKeys = async (
+    keys: string[],
+    seedMap?: UniversityLogoMap,
+  ) => {
+    if (keys.length === 0) return;
+    const epoch = resetEpochRef.current;
+    const baseMap = { ...(seedMap ?? universityLogosRef.current) };
+    const perKeyToken: Record<string, number> = {};
+
+    for (const key of keys) {
+      const nextToken = (univRunTokensRef.current[key] ?? 0) + 1;
+      univRunTokensRef.current[key] = nextToken;
+      perKeyToken[key] = nextToken;
+    }
+
+    setUniversityLogos((prev) => {
+      const next = { ...(seedMap ?? prev) };
+      for (const key of keys) {
+        const entry = next[key];
+        if (entry) {
+          next[key] = {
+            ...entry,
+            status: 'finding',
+            statusMessage: 'Inspecting university homepage for official logos…',
+          };
+        }
+      }
+      return next;
+    });
+
+    await runWithConcurrencyLimit(keys, 2, async (key) => {
+      if (
+        resetEpochRef.current !== epoch ||
+        univRunTokensRef.current[key] !== perKeyToken[key]
+      ) {
+        return;
+      }
+      const currentEntry = baseMap[key] ?? universityLogosRef.current[key];
+      if (!currentEntry) return;
+
+      const discovered = await discoverSingleUniversityEntry(currentEntry);
+      if (
+        resetEpochRef.current !== epoch ||
+        univRunTokensRef.current[key] !== perKeyToken[key]
+      ) {
+        revokeEntryCandidateUrls(discovered);
+        return;
+      }
+
+      setUniversityLogos((prev) => {
+        const prevEntry = prev[key];
+        const keepUrl = discovered.logo?.previewUrl ?? null;
+        if (prevEntry && prevEntry !== discovered) {
+          revokeEntryCandidateUrls(prevEntry, keepUrl);
+        }
+        return {
+          ...prev,
+          [key]: discovered,
+        };
+      });
+    });
+  };
+
   const applyWorksheet = async (
     session: WorkbookSession,
     sheetName: string,
   ) => {
+    resetEpochRef.current += 1;
+    univRunTokensRef.current = {};
     const parsedCourses = parseCoursesFromSheet(session.sheets, sheetName);
-    const resolvedLogos = await resolveUniversityLogosForCourses(
+    const initializedLogos = initializeUniversityLogosForCourses(
       parsedCourses,
       universityLogosRef.current,
     );
@@ -413,10 +536,18 @@ export function App() {
     setPendingSheetChoice(null);
     setCourses(parsedCourses);
     setSelectedCurrency(session.detectedCurrency ?? 'GBP');
-    setUniversityLogos(resolvedLogos);
+    setUniversityLogos(initializedLogos);
     setActiveSection({ kind: 'summary' });
     setActivePdfPage(1);
     setErrorMessage(null);
+
+    if (inExtensionTab) {
+      const permittedKeys =
+        await findAlreadyPermittedUniversityKeys(initializedLogos);
+      if (permittedKeys.length > 0) {
+        void runDiscoveryForKeys(permittedKeys, initializedLogos);
+      }
+    }
   };
 
   const handleExcelFile = async (file: File) => {
@@ -455,6 +586,8 @@ export function App() {
   };
 
   const handleReset = () => {
+    resetEpochRef.current += 1;
+    univRunTokensRef.current = {};
     revokeLogoPreviewUrl(customBrandLogoRef.current);
     revokeUniversityLogoUrls(universityLogosRef.current);
 
@@ -472,7 +605,6 @@ export function App() {
     setActivePdfPage(1);
     setPdfMeta(null);
     setErrorMessage(null);
-    setLookingUpUnivKey(null);
 
     if (excelInputRef.current) excelInputRef.current.value = '';
     if (brandLogoInputRef.current) brandLogoInputRef.current.value = '';
@@ -507,21 +639,42 @@ export function App() {
     if (!file) return;
     try {
       const loaded = await loadLogoInMemory(file);
+      const pixelMetrics = await inspectProcessedLogoPixels(
+        loaded.bytes,
+        loaded.mimeType,
+      ).catch(() => null);
+      const enrichedLogo: InMemoryLogo = pixelMetrics
+        ? {
+            ...loaded,
+            needsDarkBackdrop: pixelMetrics.needsDarkBackdrop,
+            pixelWidth: pixelMetrics.width,
+            pixelHeight: pixelMetrics.height,
+          }
+        : loaded;
+
       const prevEntry = universityLogosRef.current[course.universityKey];
-      if (prevEntry?.logo) {
-        revokeLogoPreviewUrl(prevEntry.logo);
-      }
+      revokeEntryCandidateUrls(prevEntry, enrichedLogo.previewUrl);
+
       setUniversityLogos((prev) => ({
         ...prev,
         [course.universityKey]: {
-          universityKey: course.universityKey,
-          universityName: course.university,
-          websiteHref: course.websiteHref,
-          domain: prev[course.universityKey]?.domain ?? null,
-          initials: getUniversityInitials(course.university),
+          ...(prev[course.universityKey] ?? {
+            universityKey: course.universityKey,
+            universityName: course.university,
+            websiteHref: course.websiteHref,
+            normalizedWebsiteUrl: null,
+            finalWebsiteUrl: null,
+            domain: null,
+            requiredHostOrigins: [],
+            initials: getUniversityInitials(course.university),
+          }),
           source: 'uploaded',
-          logo: loaded,
-          lookupNote: `Custom image (${loaded.fileName})`,
+          status: 'found',
+          logo: enrichedLogo,
+          logoSourceUrl: null,
+          statusMessage: enrichedLogo.needsDarkBackdrop
+            ? `Custom uploaded (${loaded.fileName}) — dark frame applied`
+            : `Custom uploaded (${loaded.fileName})`,
         },
       }));
       setErrorMessage(null);
@@ -534,51 +687,109 @@ export function App() {
     }
   };
 
-  const handleRestoreUniversityLogo = async (course: CourseRecord) => {
-    const prevEntry = universityLogosRef.current[course.universityKey];
-    if (prevEntry?.logo) {
-      revokeLogoPreviewUrl(prevEntry.logo);
+  // CRITICAL: Calls chrome.permissions.request synchronously in user click handler before any await.
+  const handleStartBulkDiscovery = () => {
+    const origins = collectPendingHostOrigins(universityLogosRef.current);
+    const targetKeys = Object.values(universityLogosRef.current)
+      .filter((e) => e.status === 'permission_required' && e.normalizedWebsiteUrl)
+      .map((e) => e.universityKey);
+
+    if (origins.length === 0) {
+      void runDiscoveryForKeys(targetKeys);
+      return;
     }
-    const refreshed = await resolveUniversityLogosForCourses([course], {});
-    const restored = refreshed[course.universityKey];
-    if (restored) {
-      setUniversityLogos((prev) => ({
-        ...prev,
-        [course.universityKey]: restored,
-      }));
+
+    const permissionPromise = requestHostPermissionsSync(origins);
+    void permissionPromise.then((granted) => {
+      if (granted) {
+        void runDiscoveryForKeys(targetKeys);
+      } else {
+        setUniversityLogos((prev) => {
+          const next = { ...prev };
+          for (const key of targetKeys) {
+            if (next[key]) {
+              next[key] = {
+                ...next[key],
+                status: 'unavailable',
+                statusMessage:
+                  'Host access permission was declined. Using initials placeholder or manual upload.',
+              };
+            }
+          }
+          return next;
+        });
+      }
+    });
+  };
+
+  const handleRequestOrRetryUniversityDiscovery = (course: CourseRecord) => {
+    const entry = universityLogosRef.current[course.universityKey];
+    if (!entry || !entry.normalizedWebsiteUrl) return;
+
+    if (entry.requiredHostOrigins.length > 0 && inExtensionTab) {
+      const permPromise = requestHostPermissionsSync(entry.requiredHostOrigins);
+      void permPromise.then((granted) => {
+        if (granted) {
+          void runDiscoveryForKeys([course.universityKey]);
+        } else {
+          setUniversityLogos((prev) => ({
+            ...prev,
+            [course.universityKey]: {
+              ...prev[course.universityKey],
+              status: 'unavailable',
+              statusMessage: `Host access declined for ${entry.domain ?? 'this university website'}.`,
+            },
+          }));
+        }
+      });
     }
   };
 
-  const handleTryWebsiteLookup = async (course: CourseRecord) => {
-    const current = universityLogosRef.current[course.universityKey];
-    if (!current || !current.websiteHref) return;
+  const handleGrantExternalHostDownload = (
+    universityKey: string,
+    pendingIdx: number,
+  ) => {
+    const entry = universityLogosRef.current[universityKey];
+    const pending = entry?.pendingExternalHosts?.[pendingIdx];
+    if (!entry || !pending) return;
 
-    setLookingUpUnivKey(course.universityKey);
-    const result = await attemptWebsiteLogoLookup(current);
-    setLookingUpUnivKey(null);
-
-    if (result.logo) {
-      if (current.logo) {
-        revokeLogoPreviewUrl(current.logo);
+    const permPromise = requestHostPermissionsSync([pending.originPattern]);
+    void permPromise.then(async (granted) => {
+      if (!granted) {
+        setUniversityLogos((prev) => ({
+          ...prev,
+          [universityKey]: {
+            ...prev[universityKey],
+            statusMessage: `Access declined for external image host ${pending.origin}.`,
+          },
+        }));
+        return;
       }
       setUniversityLogos((prev) => ({
         ...prev,
-        [course.universityKey]: {
-          ...prev[course.universityKey],
-          source: 'fetched',
-          logo: result.logo,
-          lookupNote: result.note,
+        [universityKey]: {
+          ...prev[universityKey],
+          status: 'finding',
+          statusMessage: `Downloading candidate logo from ${pending.origin}…`,
         },
       }));
-    } else {
+      const updated = await fetchPendingExternalHostCandidate(entry, pending);
       setUniversityLogos((prev) => ({
         ...prev,
-        [course.universityKey]: {
-          ...prev[course.universityKey],
-          lookupNote: result.note,
-        },
+        [universityKey]: updated,
       }));
-    }
+    });
+  };
+
+  const handleSelectCandidate = (universityKey: string, candidateId: string) => {
+    setUniversityLogos((prev) => {
+      const current = prev[universityKey];
+      if (!current) return prev;
+      return {
+        ...prev,
+        [universityKey]: applyCandidateSelection(current, candidateId),
+      };
+    });
   };
 
   const handleDownloadPdf = async () => {
@@ -591,9 +802,8 @@ export function App() {
       return;
     }
 
-    let bytes = pdfMeta?.pdfBytes;
-    if (!bytes) {
-      setIsGeneratingPdf(true);
+    setIsDownloadingPdf(true);
+    try {
       const res = await generateCourseShortlistPdf({
         courses,
         currency: activeCurrency,
@@ -602,25 +812,25 @@ export function App() {
         universityLogos,
         logo: customBrandLogo,
       });
-      setIsGeneratingPdf(false);
       if (!res.ok) {
         setErrorMessage(res.message);
         return;
       }
-      bytes = res.pdfBytes;
-    }
 
-    const blob = new Blob([new Uint8Array(bytes)], {
-      type: 'application/pdf',
-    });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = buildShortlistFilename(trimmedStudentName);
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      const blob = new Blob([new Uint8Array(res.pdfBytes)], {
+        type: 'application/pdf',
+      });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = buildShortlistFilename(trimmedStudentName);
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } finally {
+      setIsDownloadingPdf(false);
+    }
   };
 
   const navigateToSection = (target: ActiveSection) => {
@@ -765,13 +975,13 @@ export function App() {
                   type="button"
                   className="btn btn-primary"
                   disabled={
-                    isGeneratingPdf ||
+                    isDownloadingPdf ||
                     !trimmedStudentName ||
                     courses.length === 0
                   }
                   onClick={handleDownloadPdf}
                 >
-                  {isGeneratingPdf ? (
+                  {isDownloadingPdf ? (
                     <Loader2
                       size={15}
                       className="spin-icon"
@@ -1036,12 +1246,11 @@ export function App() {
                       <button
                         key={`${course.rowNumber}-${course.programName}`}
                         type="button"
-                        className={`nav-item${
-                          activeSection.kind === 'course' &&
+                        className={`nav-item${activeSection.kind === 'course' &&
                           activeSection.index === idx
-                            ? ' is-active'
-                            : ''
-                        }`}
+                          ? ' is-active'
+                          : ''
+                          }`}
                         onClick={() =>
                           navigateToSection({ kind: 'course', index: idx })
                         }
@@ -1112,14 +1321,56 @@ export function App() {
                       {uniqueUniversities.length} unique
                     </span>
                   </div>
+
+                  {inExtensionTab &&
+                    Object.values(universityLogos).some(
+                      (e) =>
+                        e.status === 'permission_required' &&
+                        e.normalizedWebsiteUrl,
+                    ) && (
+                      <div className="discovery-consent-box">
+                        <strong>Online University Logo Discovery</strong>
+                        <span>
+                          Grant temporary read access only to fetch public
+                          homepage logos (no student or spreadsheet data is
+                          sent):
+                        </span>
+                        <p className="discovery-domain-list">
+                          {Object.values(universityLogos)
+                            .filter(
+                              (e) =>
+                                e.status === 'permission_required' && e.domain,
+                            )
+                            .map((e) => e.domain)
+                            .join(', ')}
+                        </p>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-primary"
+                          onClick={handleStartBulkDiscovery}
+                        >
+                          <Globe size={13} aria-hidden="true" />
+                          Discover University Logos
+                        </button>
+                      </div>
+                    )}
+
                   <div className="logo-manager-list">
                     {uniqueUniversities.map((course) => {
                       const entry = universityLogos[course.universityKey];
-                      const isLookingUp =
-                        lookingUpUnivKey === course.universityKey;
-                      const isCustom =
-                        entry?.source === 'uploaded' ||
-                        entry?.source === 'fetched';
+                      const status = entry?.status ?? 'unavailable';
+                      const statusLabel =
+                        status === 'finding'
+                          ? 'Finding logo…'
+                          : status === 'found'
+                            ? entry?.source === 'uploaded'
+                              ? 'Found (Custom upload)'
+                              : 'Found'
+                            : status === 'needs_selection'
+                              ? 'Needs selection'
+                              : status === 'permission_required'
+                                ? 'Needs permission'
+                                : 'Unavailable';
 
                       return (
                         <div
@@ -1135,15 +1386,36 @@ export function App() {
                               <span className="logo-manager-name">
                                 {course.university}
                               </span>
-                              <span className="logo-manager-status">
-                                {entry?.source === 'packaged'
-                                  ? 'Official logo packaged'
-                                  : entry?.source === 'uploaded'
-                                    ? 'Custom uploaded logo'
-                                    : entry?.source === 'fetched'
-                                      ? 'Fetched website logo'
-                                      : 'Initials placeholder'}
+                              <span
+                                className={`logo-status-pill${
+                                  status === 'found'
+                                    ? ' is-found'
+                                    : status === 'needs_selection' ||
+                                        status === 'permission_required'
+                                      ? ' is-selection'
+                                      : ''
+                                }`}
+                              >
+                                {status === 'finding' && (
+                                  <Loader2
+                                    size={11}
+                                    className="spin-icon"
+                                    aria-hidden="true"
+                                  />
+                                )}
+                                {statusLabel}
                               </span>
+                              {entry?.logoSourceUrl && (
+                                <a
+                                  href={entry.logoSourceUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="logo-source-url"
+                                  title={entry.logoSourceUrl}
+                                >
+                                  {entry.logoSourceUrl}
+                                </a>
+                              )}
                             </div>
                           </div>
 
@@ -1153,12 +1425,74 @@ export function App() {
                                 el;
                             }}
                             type="file"
-                            accept=".png,.jpg,.jpeg,.svg,image/png,image/jpeg,image/svg+xml"
+                            accept=".png,.jpg,.jpeg,.webp,.svg,image/png,image/jpeg,image/webp,image/svg+xml"
                             className="visually-hidden"
                             onChange={(e) =>
                               void handleUniversityLogoUpload(course, e)
                             }
                           />
+
+                          {entry &&
+                            entry.candidates &&
+                            entry.candidates.length > 0 &&
+                            status === 'needs_selection' && (
+                              <CandidatePickerGrid
+                                entry={entry}
+                                universityName={course.university}
+                                ariaLabel={`Logo candidates for ${course.university}`}
+                                onSelect={(candId) =>
+                                  handleSelectCandidate(
+                                    course.universityKey,
+                                    candId,
+                                  )
+                                }
+                              />
+                            )}
+
+                          {entry &&
+                            entry.candidates &&
+                            entry.candidates.length > 1 &&
+                            status === 'found' && (
+                              <details className="secondary-details">
+                                <summary>
+                                  Switch candidate ({entry.candidates.length})
+                                </summary>
+                                <CandidatePickerGrid
+                                  entry={entry}
+                                  universityName={course.university}
+                                  ariaLabel={`Alternative logo candidates for ${course.university}`}
+                                  onSelect={(candId) =>
+                                    handleSelectCandidate(
+                                      course.universityKey,
+                                      candId,
+                                    )
+                                  }
+                                />
+                              </details>
+                            )}
+
+                          {inExtensionTab &&
+                            entry?.pendingExternalHosts &&
+                            entry.pendingExternalHosts.length > 0 && (
+                              <div className="logo-manager-actions">
+                                {entry.pendingExternalHosts.map((ext, idx) => (
+                                  <button
+                                    key={ext.candidateUrl}
+                                    type="button"
+                                    className="btn btn-sm btn-subtle"
+                                    onClick={() =>
+                                      handleGrantExternalHostDownload(
+                                        course.universityKey,
+                                        idx,
+                                      )
+                                    }
+                                  >
+                                    <Globe size={12} aria-hidden="true" />
+                                    Allow {ext.origin.replace(/^https?:\/\//, '')}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
 
                           <div className="logo-manager-actions">
                             <button
@@ -1174,45 +1508,28 @@ export function App() {
                               {entry?.logo ? 'Replace' : 'Upload Logo'}
                             </button>
 
-                            {course.websiteHref && (
+                            {inExtensionTab && entry?.normalizedWebsiteUrl && (
                               <button
                                 type="button"
                                 className="btn btn-sm"
-                                disabled={isLookingUp}
+                                disabled={status === 'finding'}
                                 onClick={() =>
-                                  void handleTryWebsiteLookup(course)
-                                }
-                              >
-                                {isLookingUp ? (
-                                  <Loader2
-                                    size={12}
-                                    className="spin-icon"
-                                    aria-hidden="true"
-                                  />
-                                ) : (
-                                  <Globe size={12} aria-hidden="true" />
-                                )}
-                                Fetch Website
-                              </button>
-                            )}
-
-                            {isCustom && (
-                              <button
-                                type="button"
-                                className="btn btn-sm"
-                                onClick={() =>
-                                  void handleRestoreUniversityLogo(course)
+                                  handleRequestOrRetryUniversityDiscovery(
+                                    course,
+                                  )
                                 }
                               >
                                 <RefreshCw size={12} aria-hidden="true" />
-                                Restore
+                                {status === 'permission_required'
+                                  ? `Allow ${entry.domain ?? 'site'}`
+                                  : 'Retry'}
                               </button>
                             )}
                           </div>
 
-                          {entry?.lookupNote && entry.source !== 'packaged' && (
+                          {entry?.statusMessage && (
                             <p className="logo-lookup-note">
-                              {entry.lookupNote}
+                              {entry.statusMessage}
                             </p>
                           )}
                         </div>
@@ -1467,7 +1784,7 @@ export function App() {
                           <MapPin size={14} aria-hidden="true" />
                           <span>
                             {activeCourse.campus !== NOT_SPECIFIED &&
-                            activeCourse.country !== NOT_SPECIFIED
+                              activeCourse.country !== NOT_SPECIFIED
                               ? `${activeCourse.campus} / ${activeCourse.country}`
                               : activeCourse.campus !== NOT_SPECIFIED
                                 ? activeCourse.campus
@@ -1607,9 +1924,8 @@ export function App() {
                                 {test.label}
                               </div>
                               <div
-                                className={`english-test-value${
-                                  isMissing ? ' is-missing' : ''
-                                }`}
+                                className={`english-test-value${isMissing ? ' is-missing' : ''
+                                  }`}
                               >
                                 {test.value}
                               </div>
@@ -1630,9 +1946,8 @@ export function App() {
                                 {waiver.label}
                               </div>
                               <div
-                                className={`english-test-value${
-                                  isMissing ? ' is-missing' : ''
-                                }`}
+                                className={`english-test-value${isMissing ? ' is-missing' : ''
+                                  }`}
                               >
                                 {waiver.value}
                               </div>
@@ -1685,8 +2000,8 @@ export function App() {
                         <span>Website not specified</span>
                       )}
                       <span>
-                        Fees, scholarships and entry requirements are subject to
-                        change. Confirm with the university.
+                        Fees, scholarships, dates and entry requirements are subject to
+                        change. Confirm with your Counsellor from Eccho Overseas.
                       </span>
                     </footer>
                   </article>
@@ -1747,11 +2062,10 @@ export function App() {
                               <strong>{step.title}</strong>
                             </div>
                             <span
-                              className={`guide-cat-tag${
-                                step.scope === 'UK Student Visa (UKVI)'
-                                  ? ' is-visa'
-                                  : ''
-                              }`}
+                              className={`guide-cat-tag${step.scope === 'UK Student Visa (UKVI)'
+                                ? ' is-visa'
+                                : ''
+                                }`}
                             >
                               {step.scope}
                             </span>
@@ -1877,11 +2191,10 @@ export function App() {
                                 </span>
                               </label>
                               <span
-                                className={`status-pill${
-                                  item.status === 'If applicable'
-                                    ? ' is-conditional'
-                                    : ''
-                                }`}
+                                className={`status-pill${item.status === 'If applicable'
+                                  ? ' is-conditional'
+                                  : ''
+                                  }`}
                               >
                                 {item.status}
                               </span>

@@ -18,8 +18,11 @@ All Excel parsing, validation, PDF generation, checklist state, and live PDF pre
   - Reads **Course Data** automatically when present and never imports **Comparison** as additional course rows.
   - Excludes removed fields (`University Ranking`, `ELLT`, `ESOL`, `Kaplan Test of English`, `Language Certificate Academic SELT`, `Skills For English`).
   - Preserves source order, duplicates, zero (`0`) waiver values, decimals, mixed text/numeric scores, and full descriptions.
-- **University Logos Management**
-  - Resolves verified packaged logos once per unique university (`src/assets/universities/`), with graceful initials placeholders, per-university manual upload/replace, optional user-triggered website lookup (never sending spreadsheet/student data), and restore controls.
+- **Automatic Online University Logo Discovery (Chrome Extension)**
+  - Uses each university's Website URL and University name inside the extension background worker via narrowly scoped, user-approved `optional_host_permissions` (never requesting permanent access to all sites and never transmitting student or workbook data).
+  - Extracts official candidates from `CollegeOrUniversity` / `Organization` JSON-LD schemas, `<header>` / `<nav>` images, inline SVGs, and header CSS logo backgrounds; rejects favicons, social banners, spacers, and accreditation badges.
+  - Validates magic bytes and dimensions, sanitizes and rasterizes untrusted SVG without DOM injection, detects white-on-transparent logos to apply a dark charcoal frame automatically, shows a candidate picker when multiple candidates tie (`Needs selection`), and falls back cleanly to initials (`Unavailable`) + manual upload if blocked or permission is denied.
+  - Embeds resolved PNG/JPEG bytes directly inside the PDF for completely offline viewing.
 - **Clickable PDF Navigation & Interactive Checkboxes**
   - Summary rows jump directly to each course page via internal PDF `/GoTo` annotations; course, guide, and checklist pages link cleanly back to the summary and each other.
   - Strict single-page A4 course layout fitting (`>= 9 pt` body text) blocks export with a clear error if any course overflows one page.

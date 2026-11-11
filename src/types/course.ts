@@ -90,19 +90,62 @@ export interface InMemoryLogo {
   mimeType: 'image/png' | 'image/jpeg';
   bytes: Uint8Array;
   previewUrl: string;
+  needsDarkBackdrop?: boolean;
+  pixelWidth?: number;
+  pixelHeight?: number;
 }
 
-export type UniversityLogoSource = 'packaged' | 'uploaded' | 'fetched' | 'initials';
+export type UniversityLogoSource = 'discovered' | 'uploaded' | 'initials';
+
+export type LogoDiscoveryStatus =
+  | 'idle'
+  | 'permission_required'
+  | 'finding'
+  | 'found'
+  | 'needs_selection'
+  | 'unavailable';
+
+export type CandidateSourceKind =
+  | 'jsonld'
+  | 'header_img'
+  | 'header_svg'
+  | 'header_css'
+  | 'brand_img';
+
+export interface DiscoveredLogoCandidate {
+  id: string;
+  sourceUrl: string;
+  sourceKind: CandidateSourceKind;
+  sourceLabel: string;
+  score: number;
+  logo: InMemoryLogo;
+}
+
+export interface PendingExternalImageHost {
+  origin: string;
+  originPattern: string;
+  candidateUrl: string;
+  sourceKind: CandidateSourceKind;
+  sourceLabel: string;
+  score: number;
+}
 
 export interface UniversityLogoEntry {
   universityKey: string;
   universityName: string;
   websiteHref: string | null;
+  normalizedWebsiteUrl: string | null;
+  finalWebsiteUrl: string | null;
   domain: string | null;
+  requiredHostOrigins: string[];
   initials: string;
   source: UniversityLogoSource;
+  status: LogoDiscoveryStatus;
   logo: InMemoryLogo | null;
-  lookupNote?: string;
+  logoSourceUrl?: string | null;
+  candidates?: DiscoveredLogoCandidate[];
+  pendingExternalHosts?: PendingExternalImageHost[];
+  statusMessage?: string;
 }
 
 export type UniversityLogoMap = Record<string, UniversityLogoEntry>;

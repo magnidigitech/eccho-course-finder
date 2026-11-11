@@ -430,19 +430,36 @@ function drawUniversityLogoFrame(options: {
   size: number;
   pad: number;
   embeddedImage: PDFImage | null;
+  needsDarkBackdrop?: boolean;
   initials: string;
   fonts: EmbeddedFonts;
 }): void {
-  const { page, x, topY, size, pad, embeddedImage, initials, fonts } = options;
+  const {
+    page,
+    x,
+    topY,
+    size,
+    pad,
+    embeddedImage,
+    needsDarkBackdrop = false,
+    initials,
+    fonts,
+  } = options;
   const bottomY = topY - size;
+
+  const boxFill = embeddedImage
+    ? needsDarkBackdrop
+      ? COLORS.textPrimary
+      : COLORS.white
+    : COLORS.surfaceTint;
 
   page.drawRectangle({
     x,
     y: bottomY,
     width: size,
     height: size,
-    color: embeddedImage ? COLORS.white : COLORS.surfaceTint,
-    borderColor: COLORS.brandBorder,
+    color: boxFill,
+    borderColor: needsDarkBackdrop ? COLORS.textPrimary : COLORS.brandBorder,
     borderWidth: 0.9,
   });
 
@@ -746,7 +763,7 @@ function drawStandardFooter(options: {
     const disclaimerX = sideMargin + 162;
     const disclaimerW = contentWidth - 162 - pageTextW - 14;
     const disclaimerLines = wrapText(
-      'Fees, scholarships and entry requirements are subject to change. Confirm with the university.',
+      'Fees, scholarships and entry requirements are subject to change. Confirm with your Counsellor from Eccho Overseas.',
       fonts.regular,
       7.4,
       disclaimerW,
@@ -1090,6 +1107,7 @@ function renderSummaryPages(options: {
         size: 36,
         pad: 4,
         embeddedImage: embeddedImg,
+        needsDarkBackdrop: Boolean(logoEntry?.logo?.needsDarkBackdrop),
         initials:
           logoEntry?.initials ?? getUniversityInitials(row.course.university),
         fonts,
@@ -1200,19 +1218,19 @@ function renderSummaryPages(options: {
         subtitle: string;
         targetPage: PDFPage;
       }[] = [
-        {
-          icon: 'fileText',
-          title: 'UK Application Process',
-          subtitle: '6-step admissions & Student visa guide',
-          targetPage: guideStartPage,
-        },
-        {
-          icon: 'squareCheck',
-          title: 'Required Documents Checklist',
-          subtitle: 'Interactive checklist to tick and save',
-          targetPage: checklistStartPage,
-        },
-      ];
+          {
+            icon: 'fileText',
+            title: 'UK Application Process',
+            subtitle: '6-step admissions & Student visa guide',
+            targetPage: guideStartPage,
+          },
+          {
+            icon: 'squareCheck',
+            title: 'Required Documents Checklist',
+            subtitle: 'Interactive checklist to tick and save',
+            targetPage: checklistStartPage,
+          },
+        ];
 
       for (const tool of toolkitRows) {
         const boxH = 30;
@@ -1733,6 +1751,7 @@ function renderCoursePage(options: {
     size: tier.logoBoxSize,
     pad: 5,
     embeddedImage: embeddedUnivImg,
+    needsDarkBackdrop: Boolean(logoEntry?.logo?.needsDarkBackdrop),
     initials: logoEntry?.initials ?? getUniversityInitials(course.university),
     fonts,
   });
@@ -2083,19 +2102,19 @@ function renderCoursePage(options: {
     label: string;
     targetPage: PDFPage;
   }[] = [
-    {
-      x: sx,
-      icon: 'fileText',
-      label: 'UK Application Process',
-      targetPage: guideStartPage,
-    },
-    {
-      x: sx + toolW + toolGap,
-      icon: 'squareCheck',
-      label: 'Documents Checklist',
-      targetPage: checklistStartPage,
-    },
-  ];
+      {
+        x: sx,
+        icon: 'fileText',
+        label: 'UK Application Process',
+        targetPage: guideStartPage,
+      },
+      {
+        x: sx + toolW + toolGap,
+        icon: 'squareCheck',
+        label: 'Documents Checklist',
+        targetPage: checklistStartPage,
+      },
+    ];
 
   for (const btn of quickButtons) {
     page.drawRectangle({

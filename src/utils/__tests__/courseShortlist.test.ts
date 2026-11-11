@@ -70,48 +70,52 @@ function loadNodeDefaultLogo(): InMemoryLogo {
 }
 
 function loadNodeUniversityLogos(courses: CourseRecord[]): UniversityLogoMap {
-  const fileByDomain: Record<string, string> = {
-    'sussex.ac.uk': 'sussex.png',
-    'uel.ac.uk': 'uel.png',
-    'brookes.ac.uk': 'brookes.png',
-    'le.ac.uk': 'leicester.png',
-    'coventry.ac.uk': 'coventry.png',
-    'northumbria.ac.uk': 'northumbria.png',
-  };
+  // Exercise mixed discovered PNG logos (including needsDarkBackdrop) and unavailable initials placeholders
+  const samplePngBytes = new Uint8Array(
+    fs.readFileSync(path.resolve(process.cwd(), 'src/assets/eccho-logo.png')),
+  );
   const map: UniversityLogoMap = {};
-  for (const c of courses) {
-    if (map[c.universityKey]) continue;
+  courses.forEach((c, idx) => {
+    if (map[c.universityKey]) return;
     const host = c.websiteHref ? new URL(c.websiteHref).hostname.replace(/^www\./, '') : null;
-    const matchedFile = host ? fileByDomain[host] : undefined;
-    if (matchedFile) {
-      const fullPath = path.resolve(process.cwd(), 'src/assets/universities', matchedFile);
-      const bytes = new Uint8Array(fs.readFileSync(fullPath));
+    const simulateUnavailable = host === 'le.ac.uk';
+    if (!simulateUnavailable) {
       map[c.universityKey] = {
         universityKey: c.universityKey,
         universityName: c.university,
         websiteHref: c.websiteHref,
+        normalizedWebsiteUrl: c.websiteHref,
+        finalWebsiteUrl: c.websiteHref,
         domain: host,
+        requiredHostOrigins: [],
         initials: getUniversityInitials(c.university),
-        source: 'packaged',
+        source: 'discovered',
+        status: 'found',
         logo: {
-          fileName: matchedFile,
+          fileName: `discovered-${idx}.png`,
           mimeType: 'image/png',
-          bytes,
+          bytes: samplePngBytes,
           previewUrl: '',
+          needsDarkBackdrop: host === 'uel.ac.uk',
         },
+        logoSourceUrl: c.websiteHref,
       };
     } else {
       map[c.universityKey] = {
         universityKey: c.universityKey,
         universityName: c.university,
         websiteHref: c.websiteHref,
+        normalizedWebsiteUrl: c.websiteHref,
+        finalWebsiteUrl: null,
         domain: host,
+        requiredHostOrigins: [],
         initials: getUniversityInitials(c.university),
         source: 'initials',
+        status: 'unavailable',
         logo: null,
       };
     }
-  }
+  });
   return map;
 }
 

@@ -22,10 +22,8 @@
   },
   "permissions": ["storage"],
   "optional_host_permissions": [
-    "https://*.ac.uk/*",
-    "https://*.edu/*",
-    "https://*.edu.au/*",
-    "https://*.ca/*"
+    "https://*/*",
+    "http://*/*"
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self';"

@@ -58,7 +58,7 @@ export const BRAND_CONFIG: BrandConfig = {
     address: '',
   },
   footerNote:
-    'Fees, scholarships and entry requirements are subject to change. Confirm with the university.',
+    'Fees, scholarships, dates and entry requirements are subject to change. Confirm with your Counsellor from Eccho Overseas.',
 };
 
 export interface ContactEntry {

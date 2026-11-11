@@ -20,6 +20,33 @@ export function sanitizeSvgMarkup(rawSvg: string): string {
   );
   forbiddenTags.forEach((node) => node.remove());
 
+  // Strip <use> pointing to external resources and <style> @import rules
+  doc.querySelectorAll('use').forEach((node) => {
+    const ref =
+      node.getAttribute('href') || node.getAttribute('xlink:href') || '';
+    if (ref && !ref.trim().startsWith('#')) {
+      node.remove();
+    }
+  });
+  doc.querySelectorAll('style').forEach((node) => {
+    if (/@import|https?:\/\//i.test(node.textContent ?? '')) {
+      node.textContent = (node.textContent ?? '')
+        .replace(/@import[^;]*;/gi, '')
+        .replace(/url\(\s*['"]?https?:[^)]*\)/gi, 'none');
+    }
+  });
+
+  // Ensure vector SVG has explicit viewBox-backed width/height for high-DPI rasterization
+  const svgEl = doc.documentElement;
+  const vb = svgEl.getAttribute('viewBox');
+  if (vb && (!svgEl.getAttribute('width') || !svgEl.getAttribute('height'))) {
+    const parts = vb.trim().split(/[\s,]+/).map(Number);
+    if (parts.length === 4 && parts[2] > 0 && parts[3] > 0) {
+      svgEl.setAttribute('width', String(parts[2]));
+      svgEl.setAttribute('height', String(parts[3]));
+    }
+  }
+
   const allElements = doc.querySelectorAll('*');
   allElements.forEach((el) => {
     for (const attr of Array.from(el.attributes)) {
@@ -50,8 +77,9 @@ export function rasterizeImageBlobToPngBytes(blob: Blob): Promise<Uint8Array> {
         const naturalH = img.naturalHeight || 200;
         const targetMax = 512;
         const scale = targetMax / Math.max(naturalW, naturalH);
-        const targetW = Math.max(1, Math.round(naturalW * Math.min(2, scale)));
-        const targetH = Math.max(1, Math.round(naturalH * Math.min(2, scale)));
+        const cap = blob.type.includes('svg') ? 4.5 : 2;
+        const targetW = Math.max(1, Math.round(naturalW * Math.min(cap, scale)));
+        const targetH = Math.max(1, Math.round(naturalH * Math.min(cap, scale)));
 
         const canvas = document.createElement('canvas');
         canvas.width = targetW;
