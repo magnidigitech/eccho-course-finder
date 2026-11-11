@@ -14,7 +14,17 @@ import mediumFontUrl from '@expo-google-fonts/inter/500Medium/Inter_500Medium.tt
 import semiBoldFontUrl from '@expo-google-fonts/inter/600SemiBold/Inter_600SemiBold.ttf?url';
 import boldFontUrl from '@expo-google-fonts/inter/700Bold/Inter_700Bold.ttf?url';
 import { BRAND_CONFIG, getNonEmptyContactEntries } from '../config/brand';
+import {
+  CHECKLIST_READER_INSTRUCTION,
+  DOCUMENT_CHECKLIST_GROUPS,
+  GUIDANCE_CHECKED_DATE,
+  OFFICIAL_GUIDANCE_LINKS,
+  UK_APPLICATION_STEPS,
+  type ChecklistGroup,
+  type GuideStep,
+} from '../config/ukGuide';
 import type {
+  ChecklistSelections,
   CourseRecord,
   CurrencyCode,
   InMemoryLogo,
@@ -28,10 +38,10 @@ export const A4_WIDTH_PT = 595.28;
 export const A4_HEIGHT_PT = 841.89;
 
 // Fixed footer band strictly outside content area
-const FOOTER_BOTTOM_PAD = 20;
-const FOOTER_RULE_Y = 62;
+const FOOTER_BOTTOM_PAD = 18;
+const FOOTER_RULE_Y = 58;
 const CONTENT_FOOTER_GAP = 10;
-const MIN_CONTENT_BOTTOM_Y = FOOTER_RULE_Y + CONTENT_FOOTER_GAP; // 72 pt from bottom
+const MIN_CONTENT_BOTTOM_Y = FOOTER_RULE_Y + CONTENT_FOOTER_GAP; // 68 pt from bottom
 
 export interface FontBytesBundle {
   regular: Uint8Array;
@@ -53,6 +63,7 @@ interface LayoutTier {
   sideMargin: number;
   minContentY: number;
   headerHeight: number;
+  navStripHeight: number;
   programTitleSize: number;
   universitySize: number;
   locationSize: number;
@@ -72,74 +83,56 @@ interface LayoutTier {
 const LAYOUT_TIERS: LayoutTier[] = [
   {
     name: 'comfortable',
-    topMargin: 24,
+    topMargin: 20,
     sideMargin: 34,
     minContentY: MIN_CONTENT_BOTTOM_Y,
     headerHeight: 46,
-    programTitleSize: 16,
-    universitySize: 11,
-    locationSize: 9.5,
-    sectionHeaderSize: 9.5,
+    navStripHeight: 20,
+    programTitleSize: 15.5,
+    universitySize: 10.75,
+    locationSize: 9.25,
+    sectionHeaderSize: 9.25,
     labelSize: 8.5,
-    bodySize: 9.5,
+    bodySize: 9.25,
     tableTextSize: 9.0,
-    tuitionValueSize: 14,
-    sectionGap: 10,
+    tuitionValueSize: 13.5,
+    sectionGap: 8.5,
     cardPadX: 10,
-    cardPadY: 7.5,
-    lineGap: 3.2,
-    tableRowHeight: 18,
+    cardPadY: 6.5,
+    lineGap: 2.8,
+    tableRowHeight: 17,
     twoColumnAcademic: false,
   },
   {
     name: 'compact-spacing',
-    topMargin: 20,
+    topMargin: 18,
     sideMargin: 30,
     minContentY: MIN_CONTENT_BOTTOM_Y,
-    headerHeight: 42,
-    programTitleSize: 15,
-    universitySize: 10.5,
-    locationSize: 9.25,
-    sectionHeaderSize: 9.25,
-    labelSize: 8.25,
-    bodySize: 9.25,
-    tableTextSize: 9.0,
-    tuitionValueSize: 13.5,
-    sectionGap: 7.5,
-    cardPadX: 8.5,
-    cardPadY: 6,
-    lineGap: 2.5,
-    tableRowHeight: 16.5,
-    twoColumnAcademic: false,
-  },
-  {
-    name: 'compact-two-column',
-    topMargin: 18,
-    sideMargin: 28,
-    minContentY: MIN_CONTENT_BOTTOM_Y,
-    headerHeight: 40,
+    headerHeight: 44,
+    navStripHeight: 19,
     programTitleSize: 14.5,
     universitySize: 10.25,
     locationSize: 9.0,
     sectionHeaderSize: 9.0,
-    labelSize: 8.0,
+    labelSize: 8.25,
     bodySize: 9.0,
     tableTextSize: 9.0,
     tuitionValueSize: 13,
     sectionGap: 6.5,
-    cardPadX: 7.5,
-    cardPadY: 5,
-    lineGap: 2.2,
-    tableRowHeight: 15.5,
-    twoColumnAcademic: true,
+    cardPadX: 8.5,
+    cardPadY: 5.5,
+    lineGap: 2.3,
+    tableRowHeight: 16,
+    twoColumnAcademic: false,
   },
   {
-    name: 'tight-minimum-9pt',
+    name: 'compact-two-column',
     topMargin: 16,
-    sideMargin: 24,
+    sideMargin: 28,
     minContentY: MIN_CONTENT_BOTTOM_Y,
-    headerHeight: 38,
-    programTitleSize: 13.5,
+    headerHeight: 42,
+    navStripHeight: 18,
+    programTitleSize: 14,
     universitySize: 10.0,
     locationSize: 9.0,
     sectionHeaderSize: 9.0,
@@ -147,21 +140,47 @@ const LAYOUT_TIERS: LayoutTier[] = [
     bodySize: 9.0,
     tableTextSize: 9.0,
     tuitionValueSize: 12.5,
-    sectionGap: 5,
-    cardPadX: 6.5,
+    sectionGap: 5.5,
+    cardPadX: 7.5,
     cardPadY: 4.5,
-    lineGap: 1.8,
+    lineGap: 2.0,
+    tableRowHeight: 15,
+    twoColumnAcademic: true,
+  },
+  {
+    name: 'tight-minimum-9pt',
+    topMargin: 15,
+    sideMargin: 24,
+    minContentY: MIN_CONTENT_BOTTOM_Y,
+    headerHeight: 40,
+    navStripHeight: 18,
+    programTitleSize: 13.25,
+    universitySize: 9.75,
+    locationSize: 9.0,
+    sectionHeaderSize: 9.0,
+    labelSize: 8.0,
+    bodySize: 9.0,
+    tableTextSize: 9.0,
+    tuitionValueSize: 12.0,
+    sectionGap: 4.5,
+    cardPadX: 6.5,
+    cardPadY: 4,
+    lineGap: 1.7,
     tableRowHeight: 14.5,
     twoColumnAcademic: true,
   },
 ];
 
 let cachedBrowserFontBytes: Promise<FontBytesBundle> | null = null;
+let cachedDefaultLogoBytes: Promise<{
+  bytes: Uint8Array;
+  mimeType: 'image/png' | 'image/jpeg';
+} | null> | null = null;
 
-async function fetchFontBytes(url: string): Promise<Uint8Array> {
+async function fetchBinaryAsset(url: string): Promise<Uint8Array> {
   const response = await fetch(url);
   if (!response.ok) {
-    throw new Error(`Failed to load embedded font asset (${response.status})`);
+    throw new Error(`Failed to load static asset (${response.status})`);
   }
   return new Uint8Array(await response.arrayBuffer());
 }
@@ -169,10 +188,10 @@ async function fetchFontBytes(url: string): Promise<Uint8Array> {
 export async function loadBrowserFontBytes(): Promise<FontBytesBundle> {
   if (!cachedBrowserFontBytes) {
     cachedBrowserFontBytes = Promise.all([
-      fetchFontBytes(regularFontUrl),
-      fetchFontBytes(mediumFontUrl),
-      fetchFontBytes(semiBoldFontUrl),
-      fetchFontBytes(boldFontUrl),
+      fetchBinaryAsset(regularFontUrl),
+      fetchBinaryAsset(mediumFontUrl),
+      fetchBinaryAsset(semiBoldFontUrl),
+      fetchBinaryAsset(boldFontUrl),
     ]).then(([regular, medium, semiBold, bold]) => ({
       regular,
       medium,
@@ -181,6 +200,34 @@ export async function loadBrowserFontBytes(): Promise<FontBytesBundle> {
     }));
   }
   return cachedBrowserFontBytes;
+}
+
+async function loadDefaultBrandLogo(): Promise<{
+  bytes: Uint8Array;
+  mimeType: 'image/png' | 'image/jpeg';
+} | null> {
+  if (!BRAND_CONFIG.logoAssetPath) {
+    return null;
+  }
+  if (!cachedDefaultLogoBytes) {
+    cachedDefaultLogoBytes = fetch(BRAND_CONFIG.logoAssetPath)
+      .then(async (resp) => {
+        if (!resp.ok) return null;
+        const bytes = new Uint8Array(await resp.arrayBuffer());
+        const contentType = (resp.headers.get('content-type') ?? '').toLowerCase();
+        const isJpg =
+          contentType.includes('jpeg') ||
+          contentType.includes('jpg') ||
+          BRAND_CONFIG.logoAssetPath!.toLowerCase().endsWith('.jpg') ||
+          BRAND_CONFIG.logoAssetPath!.toLowerCase().endsWith('.jpeg');
+        return {
+          bytes,
+          mimeType: (isJpg ? 'image/jpeg' : 'image/png') as 'image/png' | 'image/jpeg',
+        };
+      })
+      .catch(() => null);
+  }
+  return cachedDefaultLogoBytes;
 }
 
 function hexToRgb(hex: string): RGB {
@@ -192,11 +239,10 @@ function hexToRgb(hex: string): RGB {
 }
 
 const COLORS = {
-  navyPrimary: hexToRgb(BRAND_CONFIG.colors.navyPrimary),
-  navySecondary: hexToRgb(BRAND_CONFIG.colors.navySecondary),
-  orangeAccent: hexToRgb(BRAND_CONFIG.colors.orangeAccent),
-  orangeSoft: hexToRgb(BRAND_CONFIG.colors.orangeSoft),
-  orangeBorder: hexToRgb(BRAND_CONFIG.colors.orangeBorder),
+  brandPrimary: hexToRgb(BRAND_CONFIG.colors.brandPrimary),
+  brandDark: hexToRgb(BRAND_CONFIG.colors.brandDark),
+  brandSoft: hexToRgb(BRAND_CONFIG.colors.brandSoft),
+  brandBorder: hexToRgb(BRAND_CONFIG.colors.brandBorder),
   surfaceTint: hexToRgb(BRAND_CONFIG.colors.surfaceTint),
   surfaceAlt: hexToRgb(BRAND_CONFIG.colors.surfaceAlt),
   border: hexToRgb(BRAND_CONFIG.colors.border),
@@ -205,10 +251,10 @@ const COLORS = {
   textSecondary: hexToRgb(BRAND_CONFIG.colors.textSecondary),
   textMuted: hexToRgb(BRAND_CONFIG.colors.textMuted),
   white: hexToRgb(BRAND_CONFIG.colors.white),
+  slateBadgeBg: rgb(0.937, 0.953, 0.941),
 };
 
 function cleanControlChars(text: string): string {
-  // Remove invisible control / zero-width chars that PDF encoders reject
   return text.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u200B\uFEFF]/g, '');
 }
 
@@ -216,7 +262,6 @@ function measureWidth(font: PDFFont, text: string, size: number): number {
   try {
     return font.widthOfTextAtSize(text, size);
   } catch {
-    // Fallback: strip any unsupported glyph code points character by character
     let safe = '';
     for (const ch of text) {
       try {
@@ -281,7 +326,6 @@ function wrapText(
         current = '';
       }
 
-      // If single token exceeds maxWidth, split cleanly across lines without truncation
       if (measureWidth(font, word, fontSize) <= maxWidth) {
         current = word;
       } else {
@@ -312,6 +356,467 @@ function blockHeight(lines: string[], fontSize: number, lineGap: number): number
   return lines.length * fontSize + (lines.length - 1) * lineGap;
 }
 
+function drawLines(
+  page: PDFPage,
+  lines: string[],
+  x: number,
+  topY: number,
+  font: PDFFont,
+  fontSize: number,
+  lineGap: number,
+  color: RGB,
+): void {
+  const step = fontSize + lineGap;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (line.length === 0) continue;
+    const baselineY = topY - fontSize * 0.82 - i * step;
+    page.drawText(line, {
+      x,
+      y: baselineY,
+      size: fontSize,
+      font,
+      color,
+    });
+  }
+}
+
+function drawSectionHeading(
+  page: PDFPage,
+  title: string,
+  x: number,
+  topY: number,
+  width: number,
+  font: PDFFont,
+  fontSize: number,
+): number {
+  const barH = fontSize + 1;
+  page.drawRectangle({
+    x,
+    y: topY - barH,
+    width: 3,
+    height: barH,
+    color: COLORS.brandPrimary,
+  });
+
+  page.drawText(title, {
+    x: x + 8,
+    y: topY - fontSize * 0.84,
+    size: fontSize,
+    font,
+    color: COLORS.brandDark,
+  });
+
+  const ruleY = topY - fontSize - 3.5;
+  page.drawLine({
+    start: { x, y: ruleY },
+    end: { x: x + width, y: ruleY },
+    thickness: 0.6,
+    color: COLORS.border,
+  });
+
+  return topY - (fontSize + 5);
+}
+
+function addUriLinkAnnotation(
+  pdfDoc: PDFDocument,
+  page: PDFPage,
+  rect: [number, number, number, number],
+  url: string,
+): void {
+  const annot = pdfDoc.context.obj({
+    Type: 'Annot',
+    Subtype: 'Link',
+    Rect: rect,
+    Border: [0, 0, 0],
+    A: {
+      Type: 'Action',
+      S: 'URI',
+      URI: PDFString.of(url),
+    },
+  });
+  page.node.addAnnot(pdfDoc.context.register(annot));
+}
+
+function addGoToLinkAnnotation(
+  pdfDoc: PDFDocument,
+  page: PDFPage,
+  rect: [number, number, number, number],
+  targetPage: PDFPage,
+): void {
+  const dest = pdfDoc.context.obj([targetPage.ref, PDFName.of('Fit')]);
+  const annot = pdfDoc.context.obj({
+    Type: 'Annot',
+    Subtype: 'Link',
+    Rect: rect,
+    Border: [0, 0, 0],
+    A: {
+      Type: 'Action',
+      S: 'GoTo',
+      D: dest,
+    },
+  });
+  page.node.addAnnot(pdfDoc.context.register(annot));
+}
+
+interface NavPillSpec {
+  label: string;
+  targetPage: PDFPage;
+}
+
+/**
+ * Draws a shared branded top bar, logo/wordmark, section title,
+ * "Prepared for [Student Name]", and an internal PDF navigation strip.
+ */
+function drawPageHeaderAndNav(options: {
+  pdfDoc: PDFDocument;
+  page: PDFPage;
+  topMargin: number;
+  sideMargin: number;
+  headerHeight: number;
+  navStripHeight: number;
+  sectionLabel: string;
+  subLabel: string;
+  studentName: string;
+  fonts: EmbeddedFonts;
+  embeddedLogo: PDFImage | null;
+  navLinks: NavPillSpec[];
+}): number {
+  const {
+    pdfDoc,
+    page,
+    topMargin,
+    sideMargin,
+    headerHeight,
+    navStripHeight,
+    sectionLabel,
+    subLabel,
+    studentName,
+    fonts,
+    embeddedLogo,
+    navLinks,
+  } = options;
+
+  const startX = sideMargin;
+  const contentWidth = A4_WIDTH_PT - sideMargin * 2;
+
+  // White page background
+  page.drawRectangle({
+    x: 0,
+    y: 0,
+    width: A4_WIDTH_PT,
+    height: A4_HEIGHT_PT,
+    color: COLORS.white,
+  });
+
+  // Eccho green top bar
+  page.drawRectangle({
+    x: 0,
+    y: A4_HEIGHT_PT - 4,
+    width: A4_WIDTH_PT,
+    height: 4,
+    color: COLORS.brandPrimary,
+  });
+  page.drawRectangle({
+    x: 0,
+    y: A4_HEIGHT_PT - 4,
+    width: 130,
+    height: 4,
+    color: COLORS.brandDark,
+  });
+
+  const headerTopY = A4_HEIGHT_PT - topMargin;
+  const headerBottomY = headerTopY - headerHeight;
+
+  if (embeddedLogo) {
+    const maxLogoW = 140;
+    const maxLogoH = headerHeight - 10;
+    const scale = Math.min(
+      maxLogoW / embeddedLogo.width,
+      maxLogoH / embeddedLogo.height,
+    );
+    const drawW = embeddedLogo.width * scale;
+    const drawH = embeddedLogo.height * scale;
+    page.drawImage(embeddedLogo, {
+      x: startX,
+      y: headerTopY - drawH - 2,
+      width: drawW,
+      height: drawH,
+    });
+  } else {
+    const ecchoText = 'ECCHO';
+    const overseasText = 'OVERSEAS';
+    const wordSize = 14;
+    const ecchoW = measureWidth(fonts.bold, ecchoText, wordSize);
+
+    page.drawText(ecchoText, {
+      x: startX,
+      y: headerTopY - 15,
+      size: wordSize,
+      font: fonts.bold,
+      color: COLORS.brandDark,
+    });
+    page.drawText(overseasText, {
+      x: startX + ecchoW + 5,
+      y: headerTopY - 15,
+      size: wordSize,
+      font: fonts.semiBold,
+      color: COLORS.brandPrimary,
+    });
+    page.drawRectangle({
+      x: startX,
+      y: headerTopY - 20,
+      width: 34,
+      height: 1.75,
+      color: COLORS.brandPrimary,
+    });
+  }
+
+  // Optional non-empty contact info from brand config (omitted when empty)
+  const contacts = getNonEmptyContactEntries();
+  if (contacts.length > 0) {
+    const contactStr = makeEncodable(
+      fonts.regular,
+      contacts.map((c) => c.value).join('  •  '),
+      8,
+    );
+    page.drawText(contactStr, {
+      x: startX,
+      y: headerBottomY + 4,
+      size: 8,
+      font: fonts.regular,
+      color: COLORS.textMuted,
+    });
+  }
+
+  // Right header: Document Section + Prepared for [Student Name] + Subtitle
+  const titleText = makeEncodable(fonts.bold, sectionLabel, 10.5);
+  const titleW = measureWidth(fonts.bold, titleText, 10.5);
+  page.drawText(titleText, {
+    x: startX + contentWidth - titleW,
+    y: headerTopY - 11,
+    size: 10.5,
+    font: fonts.bold,
+    color: COLORS.brandDark,
+  });
+
+  const preparedText = makeEncodable(
+    fonts.semiBold,
+    `Prepared for ${studentName}`,
+    9.0,
+  );
+  const maxRightTextW = contentWidth - 155;
+  let preparedSize = 9.0;
+  while (
+    preparedSize > 7.25 &&
+    measureWidth(fonts.semiBold, preparedText, preparedSize) > maxRightTextW
+  ) {
+    preparedSize -= 0.25;
+  }
+  const preparedW = measureWidth(fonts.semiBold, preparedText, preparedSize);
+  page.drawText(preparedText, {
+    x: startX + contentWidth - preparedW,
+    y: headerTopY - 23,
+    size: preparedSize,
+    font: fonts.semiBold,
+    color: COLORS.brandPrimary,
+  });
+
+  const subText = makeEncodable(fonts.medium, subLabel, 8.25);
+  const subW = measureWidth(fonts.medium, subText, 8.25);
+  page.drawText(subText, {
+    x: startX + contentWidth - subW,
+    y: headerTopY - 34.5,
+    size: 8.25,
+    font: fonts.medium,
+    color: COLORS.textMuted,
+  });
+
+  page.drawLine({
+    start: { x: startX, y: headerBottomY },
+    end: { x: startX + contentWidth, y: headerBottomY },
+    thickness: 0.9,
+    color: COLORS.borderStrong,
+  });
+
+  // Compact Internal PDF Navigation Strip
+  const navBottomY = headerBottomY - navStripHeight;
+  page.drawRectangle({
+    x: startX,
+    y: navBottomY,
+    width: contentWidth,
+    height: navStripHeight,
+    color: COLORS.surfaceTint,
+    borderColor: COLORS.border,
+    borderWidth: 0.5,
+  });
+
+  const navLabel = 'Navigate PDF:';
+  const navFontSize = 8.0;
+  const navTextBaselineY = navBottomY + (navStripHeight - navFontSize) / 2 + 1.4;
+  page.drawText(navLabel, {
+    x: startX + 8,
+    y: navTextBaselineY,
+    size: navFontSize,
+    font: fonts.semiBold,
+    color: COLORS.textMuted,
+  });
+
+  let pillX = startX + 8 + measureWidth(fonts.semiBold, navLabel, navFontSize) + 10;
+  for (const link of navLinks) {
+    const linkText = makeEncodable(fonts.semiBold, link.label, navFontSize);
+    const textW = measureWidth(fonts.semiBold, linkText, navFontSize);
+    const pillPadX = 7;
+    const pillW = textW + pillPadX * 2;
+    const pillH = navStripHeight - 5;
+    const pillBottomY = navBottomY + 2.5;
+
+    page.drawRectangle({
+      x: pillX,
+      y: pillBottomY,
+      width: pillW,
+      height: pillH,
+      color: COLORS.white,
+      borderColor: COLORS.brandBorder,
+      borderWidth: 0.6,
+    });
+
+    page.drawText(linkText, {
+      x: pillX + pillPadX,
+      y: navTextBaselineY,
+      size: navFontSize,
+      font: fonts.semiBold,
+      color: COLORS.brandDark,
+    });
+
+    addGoToLinkAnnotation(
+      pdfDoc,
+      page,
+      [pillX, pillBottomY, pillX + pillW, pillBottomY + pillH],
+      link.targetPage,
+    );
+
+    pillX += pillW + 8;
+  }
+
+  return navBottomY;
+}
+
+function drawStandardFooter(options: {
+  pdfDoc: PDFDocument;
+  page: PDFPage;
+  sideMargin: number;
+  fonts: EmbeddedFonts;
+  pageNumber: number;
+  totalPages: number;
+  leftText: string;
+  leftHref?: string | null;
+  leftLabelPrefix?: string;
+  disclaimerNote: string;
+}): void {
+  const {
+    pdfDoc,
+    page,
+    sideMargin,
+    fonts,
+    pageNumber,
+    totalPages,
+    leftText,
+    leftHref = null,
+    leftLabelPrefix = '',
+    disclaimerNote,
+  } = options;
+
+  const startX = sideMargin;
+  const contentWidth = A4_WIDTH_PT - sideMargin * 2;
+
+  page.drawLine({
+    start: { x: startX, y: FOOTER_RULE_Y },
+    end: { x: startX + contentWidth, y: FOOTER_RULE_Y },
+    thickness: 0.75,
+    color: COLORS.borderStrong,
+  });
+
+  const footerTopLineY = 44;
+  const textSize = 8.5;
+
+  const rightFooterText = `${BRAND_CONFIG.brandName}   •   Page ${pageNumber} of ${totalPages}`;
+  const rightFooterW = measureWidth(fonts.semiBold, rightFooterText, textSize);
+  const rightFooterX = startX + contentWidth - rightFooterW;
+
+  let leftX = startX;
+  if (leftLabelPrefix) {
+    const prefixW = measureWidth(fonts.medium, leftLabelPrefix, textSize);
+    page.drawText(leftLabelPrefix, {
+      x: leftX,
+      y: footerTopLineY,
+      size: textSize,
+      font: fonts.medium,
+      color: COLORS.textSecondary,
+    });
+    leftX += prefixW;
+  }
+
+  const maxLeftW = Math.max(80, rightFooterX - leftX - 14);
+  const safeLeftText = makeEncodable(fonts.medium, leftText, textSize);
+  let leftSize = textSize;
+  while (
+    leftSize > 6.5 &&
+    measureWidth(fonts.medium, safeLeftText, leftSize) > maxLeftW
+  ) {
+    leftSize -= 0.5;
+  }
+  const leftW = measureWidth(fonts.medium, safeLeftText, leftSize);
+
+  page.drawText(safeLeftText, {
+    x: leftX,
+    y: footerTopLineY,
+    size: leftSize,
+    font: fonts.medium,
+    color: leftHref ? COLORS.brandDark : COLORS.textMuted,
+  });
+
+  if (leftHref) {
+    page.drawLine({
+      start: { x: leftX, y: footerTopLineY - 1.5 },
+      end: { x: leftX + Math.min(leftW, maxLeftW), y: footerTopLineY - 1.5 },
+      thickness: 0.5,
+      color: COLORS.brandPrimary,
+    });
+    addUriLinkAnnotation(
+      pdfDoc,
+      page,
+      [
+        leftX - 1,
+        footerTopLineY - 3,
+        leftX + Math.min(leftW, maxLeftW) + 1,
+        footerTopLineY + 10,
+      ],
+      leftHref,
+    );
+  }
+
+  page.drawText(rightFooterText, {
+    x: rightFooterX,
+    y: footerTopLineY,
+    size: textSize,
+    font: fonts.semiBold,
+    color: COLORS.brandDark,
+  });
+
+  page.drawText(makeEncodable(fonts.regular, disclaimerNote, 7.5), {
+    x: startX,
+    y: FOOTER_BOTTOM_PAD + 10,
+    size: 7.5,
+    font: fonts.regular,
+    color: COLORS.textMuted,
+  });
+}
+
+// ============================================================================
+// COURSE SHORTLIST PAGE MEASUREMENT & RENDERING
+// ============================================================================
+
 interface MeasuredCourseLayout {
   tier: LayoutTier;
   contentWidth: number;
@@ -319,27 +824,22 @@ interface MeasuredCourseLayout {
   requiredBottomY: number;
   totalContentHeight: number;
   availableContentHeight: number;
-  // Course Heading
   programLines: string[];
   universityLines: string[];
   locationLines: string[];
   headingHeight: number;
-  // Program Overview
   overviewGridItems: Array<{ label: string; lines: string[]; height: number }>;
   overviewRow1Height: number;
   intakeLines: string[];
   facultyLines: string[] | null;
   overviewBoxHeight: number;
-  // Fees & Scholarships
   tuitionDisplay: string;
   tuitionLines: string[];
   scholarshipLines: string[];
   feesBoxHeight: number;
-  // Academic Entry Requirements
-  academicItems: string[][]; // Each condition wrapped to lines
+  academicItems: string[][];
   academicTwoColumn: boolean;
   academicBoxHeight: number;
-  // English Language Requirements
   englishTestRows: Array<{
     leftLabelLines: string[];
     leftValueLines: string[];
@@ -364,7 +864,11 @@ function computeCourseLayoutForTier(
   const startX = tier.sideMargin;
   const contentWidth = A4_WIDTH_PT - tier.sideMargin * 2;
   const topStartY = A4_HEIGHT_PT - tier.topMargin;
-  let y = topStartY - tier.headerHeight - tier.sectionGap;
+  let y =
+    topStartY -
+    tier.headerHeight -
+    tier.navStripHeight -
+    tier.sectionGap;
 
   // 1. Course Heading
   const programLines = wrapText(
@@ -388,11 +892,11 @@ function computeCourseLayoutForTier(
   );
 
   const headingHeight =
-    blockHeight(programLines, tier.programTitleSize, 3) +
-    4 +
-    blockHeight(universityLines, tier.universitySize, 2.5) +
-    3 +
-    blockHeight(locationLines, tier.locationSize, 2.2);
+    blockHeight(programLines, tier.programTitleSize, 2.5) +
+    3.5 +
+    blockHeight(universityLines, tier.universitySize, 2.2) +
+    2.5 +
+    blockHeight(locationLines, tier.locationSize, 2.0);
 
   y -= headingHeight + tier.sectionGap;
 
@@ -443,15 +947,15 @@ function computeCourseLayoutForTier(
   const overviewBoxHeight =
     tier.cardPadY * 2 +
     overviewRow1Height +
-    7 +
+    6 +
     intakeBlockH +
     facultyBlockH;
 
   y -= overviewBoxHeight + tier.sectionGap;
 
-  // 3. Fees & Scholarships (2-column card: Tuition on left 146pt, Scholarship on right)
+  // 3. Fees & Scholarships
   y -= sectionTitleH;
-  const tuitionColWidth = 148;
+  const tuitionColWidth = 146;
   const feeDividerGap = 20;
   const scholarshipColWidth =
     contentWidth - tier.cardPadX * 2 - tuitionColWidth - feeDividerGap;
@@ -523,10 +1027,9 @@ function computeCourseLayoutForTier(
   const academicBoxHeight = tier.cardPadY * 2 + academicContentH;
   y -= academicBoxHeight + tier.sectionGap;
 
-  // 5. English Language Requirements (Compact 2-up Table + 3 Waivers)
+  // 5. English Language Requirements
   y -= sectionTitleH;
 
-  // Pair all 9 tests into 5 rows (left + right columns) with wrapped cell measurement
   const halfW = contentWidth / 2;
   const labelColW = halfW * 0.695;
   const scoreColW = halfW - labelColW;
@@ -574,7 +1077,7 @@ function computeCourseLayoutForTier(
       tier.tableTextSize,
       2,
     );
-    const rowHeight = Math.max(tier.tableRowHeight, contentH + 7);
+    const rowHeight = Math.max(tier.tableRowHeight, contentH + 6);
 
     englishTestRows.push({
       leftLabelLines,
@@ -592,9 +1095,9 @@ function computeCourseLayoutForTier(
     tableHeaderH +
     englishTestRows.reduce((sum, row) => sum + row.rowHeight, 0);
 
-  y -= englishTableHeight + 6;
+  y -= englishTableHeight + 5;
 
-  // English Waiver Subsection (3 fields)
+  // English Waiver Subsection
   const waiverSubheadingH = tier.labelSize + 4;
   y -= waiverSubheadingH;
 
@@ -602,7 +1105,6 @@ function computeCourseLayoutForTier(
   const waiverColGap = 10;
   const waiverColW3 = (waiverInnerW - waiverColGap * 2) / 3;
 
-  // Check if all 3 waiver values fit neatly in 3 columns or need stacked layout
   const threeColWaivers = course.englishWaivers.map((w) => {
     const labelLines = wrapText(
       w.label,
@@ -693,7 +1195,9 @@ function selectBestLayoutForCourse(
   course: CourseRecord,
   currency: CurrencyCode | null,
   fonts: EmbeddedFonts,
-): { ok: true; layout: MeasuredCourseLayout } | { ok: false; tightest: MeasuredCourseLayout } {
+):
+  | { ok: true; layout: MeasuredCourseLayout }
+  | { ok: false; tightest: MeasuredCourseLayout } {
   let tightest: MeasuredCourseLayout | null = null;
   for (const tier of LAYOUT_TIERS) {
     const measured = computeCourseLayoutForTier(course, currency, fonts, tier);
@@ -705,224 +1209,59 @@ function selectBestLayoutForCourse(
   return { ok: false, tightest: tightest! };
 }
 
-function drawLines(
-  page: PDFPage,
-  lines: string[],
-  x: number,
-  topY: number,
-  font: PDFFont,
-  fontSize: number,
-  lineGap: number,
-  color: RGB,
-): void {
-  const step = fontSize + lineGap;
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
-    if (line.length === 0) continue;
-    const baselineY = topY - fontSize * 0.82 - i * step;
-    page.drawText(line, {
-      x,
-      y: baselineY,
-      size: fontSize,
-      font,
-      color,
-    });
-  }
-}
-
-function drawSectionHeading(
-  page: PDFPage,
-  title: string,
-  x: number,
-  topY: number,
-  width: number,
-  font: PDFFont,
-  fontSize: number,
-): number {
-  const barH = fontSize + 1;
-  page.drawRectangle({
-    x,
-    y: topY - barH,
-    width: 3,
-    height: barH,
-    color: COLORS.orangeAccent,
-  });
-
-  page.drawText(title, {
-    x: x + 8,
-    y: topY - fontSize * 0.84,
-    size: fontSize,
-    font,
-    color: COLORS.navyPrimary,
-  });
-
-  const ruleY = topY - fontSize - 3.5;
-  page.drawLine({
-    start: { x, y: ruleY },
-    end: { x: x + width, y: ruleY },
-    thickness: 0.6,
-    color: COLORS.border,
-  });
-
-  return topY - (fontSize + 5);
-}
-
-function addUriLinkAnnotation(
-  pdfDoc: PDFDocument,
-  page: PDFPage,
-  rect: [number, number, number, number],
-  url: string,
-): void {
-  const annot = pdfDoc.context.obj({
-    Type: 'Annot',
-    Subtype: 'Link',
-    Rect: rect,
-    Border: [0, 0, 0],
-    A: {
-      Type: 'Action',
-      S: 'URI',
-      URI: PDFString.of(url),
-    },
-  });
-  page.node.addAnnot(pdfDoc.context.register(annot));
-  // Ensure PDF/A-safe PDFName is retained cleanly (already resolved by context.obj)
-  void PDFName;
-}
-
-function renderCoursePage(
-  pdfDoc: PDFDocument,
-  page: PDFPage,
-  course: CourseRecord,
-  layout: MeasuredCourseLayout,
-  fonts: EmbeddedFonts,
-  embeddedLogo: PDFImage | null,
-  pageIndex: number,
-  totalPages: number,
-): void {
+function renderCoursePage(options: {
+  pdfDoc: PDFDocument;
+  page: PDFPage;
+  course: CourseRecord;
+  layout: MeasuredCourseLayout;
+  fonts: EmbeddedFonts;
+  embeddedLogo: PDFImage | null;
+  studentName: string;
+  courseIndex: number;
+  courseCount: number;
+  pageNumber: number;
+  totalPages: number;
+  guideStartPage: PDFPage;
+  checklistStartPage: PDFPage;
+}): void {
+  const {
+    pdfDoc,
+    page,
+    course,
+    layout,
+    fonts,
+    embeddedLogo,
+    studentName,
+    courseIndex,
+    courseCount,
+    pageNumber,
+    totalPages,
+    guideStartPage,
+    checklistStartPage,
+  } = options;
   const { tier, startX, contentWidth } = layout;
 
-  // Pure white A4 page background
-  page.drawRectangle({
-    x: 0,
-    y: 0,
-    width: A4_WIDTH_PT,
-    height: A4_HEIGHT_PT,
-    color: COLORS.white,
+  const navBottomY = drawPageHeaderAndNav({
+    pdfDoc,
+    page,
+    topMargin: tier.topMargin,
+    sideMargin: tier.sideMargin,
+    headerHeight: tier.headerHeight,
+    navStripHeight: tier.navStripHeight,
+    sectionLabel: BRAND_CONFIG.documentTitle,
+    subLabel: `Course ${courseIndex + 1} of ${courseCount}`,
+    studentName,
+    fonts,
+    embeddedLogo,
+    navLinks: [
+      { label: 'UK Application Process', targetPage: guideStartPage },
+      { label: 'Required Documents Checklist', targetPage: checklistStartPage },
+    ],
   });
 
-  // Top executive accent strip
-  page.drawRectangle({
-    x: 0,
-    y: A4_HEIGHT_PT - 4,
-    width: A4_WIDTH_PT,
-    height: 4,
-    color: COLORS.navyPrimary,
-  });
-  page.drawRectangle({
-    x: 0,
-    y: A4_HEIGHT_PT - 4,
-    width: 120,
-    height: 4,
-    color: COLORS.orangeAccent,
-  });
+  let y = navBottomY - tier.sectionGap;
 
-  // 1. Branded Header
-  const headerTopY = A4_HEIGHT_PT - tier.topMargin;
-  const headerBottomY = headerTopY - tier.headerHeight;
-
-  if (embeddedLogo) {
-    const maxLogoW = 145;
-    const maxLogoH = tier.headerHeight - 14;
-    const scale = Math.min(
-      maxLogoW / embeddedLogo.width,
-      maxLogoH / embeddedLogo.height,
-    );
-    const drawW = embeddedLogo.width * scale;
-    const drawH = embeddedLogo.height * scale;
-    page.drawImage(embeddedLogo, {
-      x: startX,
-      y: headerTopY - drawH - 2,
-      width: drawW,
-      height: drawH,
-    });
-  } else {
-    // Crisp typographic ECCHO OVERSEAS wordmark
-    const ecchoText = 'ECCHO';
-    const overseasText = 'OVERSEAS';
-    const wordSize = 14;
-    const ecchoW = measureWidth(fonts.bold, ecchoText, wordSize);
-
-    page.drawText(ecchoText, {
-      x: startX,
-      y: headerTopY - 15,
-      size: wordSize,
-      font: fonts.bold,
-      color: COLORS.navyPrimary,
-    });
-    page.drawText(overseasText, {
-      x: startX + ecchoW + 5,
-      y: headerTopY - 15,
-      size: wordSize,
-      font: fonts.semiBold,
-      color: COLORS.orangeAccent,
-    });
-    page.drawRectangle({
-      x: startX,
-      y: headerTopY - 20,
-      width: 34,
-      height: 1.75,
-      color: COLORS.orangeAccent,
-    });
-  }
-
-  // Optional non-empty contact info from brand config (omitted when empty)
-  const contacts = getNonEmptyContactEntries();
-  if (contacts.length > 0) {
-    const contactStr = makeEncodable(
-      fonts.regular,
-      contacts.map((c) => c.value).join('  •  '),
-      8,
-    );
-    page.drawText(contactStr, {
-      x: startX,
-      y: headerBottomY + 6,
-      size: 8,
-      font: fonts.regular,
-      color: COLORS.textMuted,
-    });
-  }
-
-  // Right header: "Course Shortlist" & Programme count
-  const docTitleText = BRAND_CONFIG.documentTitle;
-  const docTitleW = measureWidth(fonts.bold, docTitleText, 10.5);
-  page.drawText(docTitleText, {
-    x: startX + contentWidth - docTitleW,
-    y: headerTopY - 13,
-    size: 10.5,
-    font: fonts.bold,
-    color: COLORS.navyPrimary,
-  });
-
-  const subHeaderText = `Course ${pageIndex + 1} of ${totalPages}`;
-  const subHeaderW = measureWidth(fonts.medium, subHeaderText, 8.5);
-  page.drawText(subHeaderText, {
-    x: startX + contentWidth - subHeaderW,
-    y: headerTopY - 25,
-    size: 8.5,
-    font: fonts.medium,
-    color: COLORS.textMuted,
-  });
-
-  page.drawLine({
-    start: { x: startX, y: headerBottomY },
-    end: { x: startX + contentWidth, y: headerBottomY },
-    thickness: 0.9,
-    color: COLORS.borderStrong,
-  });
-
-  let y = headerBottomY - tier.sectionGap;
-
-  // 2. Course Heading
+  // Course Heading
   drawLines(
     page,
     layout.programLines,
@@ -930,10 +1269,10 @@ function renderCoursePage(
     y,
     fonts.bold,
     tier.programTitleSize,
-    3,
-    COLORS.navyPrimary,
+    2.5,
+    COLORS.brandDark,
   );
-  y -= blockHeight(layout.programLines, tier.programTitleSize, 3) + 4;
+  y -= blockHeight(layout.programLines, tier.programTitleSize, 2.5) + 3.5;
 
   drawLines(
     page,
@@ -942,10 +1281,10 @@ function renderCoursePage(
     y,
     fonts.semiBold,
     tier.universitySize,
-    2.5,
-    COLORS.navySecondary,
+    2.2,
+    COLORS.brandPrimary,
   );
-  y -= blockHeight(layout.universityLines, tier.universitySize, 2.5) + 3;
+  y -= blockHeight(layout.universityLines, tier.universitySize, 2.2) + 2.5;
 
   drawLines(
     page,
@@ -954,12 +1293,13 @@ function renderCoursePage(
     y,
     fonts.regular,
     tier.locationSize,
-    2.2,
+    2.0,
     COLORS.textSecondary,
   );
-  y -= blockHeight(layout.locationLines, tier.locationSize, 2.2) + tier.sectionGap;
+  y -=
+    blockHeight(layout.locationLines, tier.locationSize, 2.0) + tier.sectionGap;
 
-  // 3. Program Overview
+  // Program Overview
   y = drawSectionHeading(
     page,
     'PROGRAM OVERVIEW',
@@ -1006,9 +1346,8 @@ function renderCoursePage(
     );
   });
 
-  innerY -= layout.overviewRow1Height + 7;
+  innerY -= layout.overviewRow1Height + 6;
 
-  // Open Intake (full width inside box)
   page.drawText('Open Intake', {
     x: startX + tier.cardPadX,
     y: innerY - tier.labelSize * 0.82,
@@ -1054,7 +1393,7 @@ function renderCoursePage(
 
   y -= layout.overviewBoxHeight + tier.sectionGap;
 
-  // 4. Fees & Scholarships
+  // Fees & Scholarships
   y = drawSectionHeading(
     page,
     'FEES & SCHOLARSHIPS',
@@ -1065,7 +1404,7 @@ function renderCoursePage(
     tier.sectionHeaderSize,
   );
 
-  const tuitionColWidth = 148;
+  const tuitionColWidth = 146;
   const feeDividerGap = 20;
   const leftPaneW = tier.cardPadX + tuitionColWidth + feeDividerGap / 2;
 
@@ -1079,20 +1418,19 @@ function renderCoursePage(
     borderWidth: 0.75,
   });
 
-  // Subtle warm accent pane behind Yearly Tuition Fee
   page.drawRectangle({
     x: startX + 0.75,
     y: y - layout.feesBoxHeight + 0.75,
     width: leftPaneW - 0.75,
     height: layout.feesBoxHeight - 1.5,
-    color: COLORS.orangeSoft,
+    color: COLORS.brandSoft,
   });
 
   page.drawLine({
     start: { x: startX + leftPaneW, y },
     end: { x: startX + leftPaneW, y: y - layout.feesBoxHeight },
     thickness: 0.75,
-    color: COLORS.orangeBorder,
+    color: COLORS.brandBorder,
   });
 
   const feeInnerY = y - tier.cardPadY;
@@ -1101,7 +1439,7 @@ function renderCoursePage(
     y: feeInnerY - tier.labelSize * 0.82,
     size: tier.labelSize,
     font: fonts.semiBold,
-    color: COLORS.orangeAccent,
+    color: COLORS.brandPrimary,
   });
   drawLines(
     page,
@@ -1111,7 +1449,7 @@ function renderCoursePage(
     fonts.bold,
     tier.tuitionValueSize,
     2.5,
-    COLORS.navyPrimary,
+    COLORS.brandDark,
   );
 
   const scholarshipX = startX + leftPaneW + feeDividerGap / 2;
@@ -1135,7 +1473,7 @@ function renderCoursePage(
 
   y -= layout.feesBoxHeight + tier.sectionGap;
 
-  // 5. Academic Entry Requirements
+  // Academic Entry Requirements
   y = drawSectionHeading(
     page,
     'ACADEMIC ENTRY REQUIREMENTS',
@@ -1169,7 +1507,7 @@ function renderCoursePage(
         x: leftX + 2.5,
         y: acadY - tier.bodySize * 0.45,
         size: 1.8,
-        color: COLORS.orangeAccent,
+        color: COLORS.brandPrimary,
       });
       drawLines(
         page,
@@ -1190,7 +1528,7 @@ function renderCoursePage(
           x: rightX + 2.5,
           y: acadY - tier.bodySize * 0.45,
           size: 1.8,
-          color: COLORS.orangeAccent,
+          color: COLORS.brandPrimary,
         });
         drawLines(
           page,
@@ -1215,7 +1553,7 @@ function renderCoursePage(
         x: itemX + 2.5,
         y: acadY - tier.bodySize * 0.45,
         size: 1.8,
-        color: COLORS.orangeAccent,
+        color: COLORS.brandPrimary,
       });
       drawLines(
         page,
@@ -1233,7 +1571,7 @@ function renderCoursePage(
 
   y -= layout.academicBoxHeight + tier.sectionGap;
 
-  // 6. English Language Requirements
+  // English Language Requirements
   y = drawSectionHeading(
     page,
     'ENGLISH LANGUAGE REQUIREMENTS',
@@ -1244,14 +1582,11 @@ function renderCoursePage(
     tier.sectionHeaderSize,
   );
 
-  // Compact 2-up Table (4 columns: Test | Score | Test | Score)
   const halfW = contentWidth / 2;
   const labelColW = halfW * 0.695;
-  const scoreColW = halfW - labelColW;
   const rowH = tier.tableRowHeight;
   const tableTopY = y;
 
-  // Outer table border
   page.drawRectangle({
     x: startX,
     y: tableTopY - layout.englishTableHeight,
@@ -1262,13 +1597,12 @@ function renderCoursePage(
     borderWidth: 0.75,
   });
 
-  // Header row background
   page.drawRectangle({
     x: startX + 0.5,
     y: tableTopY - rowH,
     width: contentWidth - 1,
     height: rowH - 0.5,
-    color: COLORS.navyPrimary,
+    color: COLORS.brandDark,
   });
 
   const headerBaselineOffset = (rowH - tier.labelSize) / 2 + 1.5;
@@ -1301,7 +1635,6 @@ function renderCoursePage(
     color: COLORS.white,
   });
 
-  // Table body rows with variable height support
   let currentRowTopY = tableTopY - rowH;
   layout.englishTestRows.forEach((row, idx) => {
     const curRowH = row.rowHeight;
@@ -1324,10 +1657,10 @@ function renderCoursePage(
     });
 
     const leftValColor =
-      row.leftValueRaw === NOT_SPECIFIED ? COLORS.textMuted : COLORS.navyPrimary;
+      row.leftValueRaw === NOT_SPECIFIED ? COLORS.textMuted : COLORS.brandDark;
     const leftLabelH = blockHeight(row.leftLabelLines, tier.tableTextSize, 2);
     const leftLabelTopY =
-      rowBottomY + curRowH - Math.max(3.5, (curRowH - leftLabelH) / 2);
+      rowBottomY + curRowH - Math.max(3, (curRowH - leftLabelH) / 2);
     drawLines(
       page,
       row.leftLabelLines,
@@ -1341,7 +1674,7 @@ function renderCoursePage(
 
     const leftValH = blockHeight(row.leftValueLines, tier.tableTextSize, 2);
     const leftValTopY =
-      rowBottomY + curRowH - Math.max(3.5, (curRowH - leftValH) / 2);
+      rowBottomY + curRowH - Math.max(3, (curRowH - leftValH) / 2);
     drawLines(
       page,
       row.leftValueLines,
@@ -1353,14 +1686,22 @@ function renderCoursePage(
       leftValColor,
     );
 
-    if (row.rightLabelLines && row.rightValueLines && row.rightValueRaw !== null) {
+    if (
+      row.rightLabelLines &&
+      row.rightValueLines &&
+      row.rightValueRaw !== null
+    ) {
       const rightValColor =
         row.rightValueRaw === NOT_SPECIFIED
           ? COLORS.textMuted
-          : COLORS.navyPrimary;
-      const rightLabelH = blockHeight(row.rightLabelLines, tier.tableTextSize, 2);
+          : COLORS.brandDark;
+      const rightLabelH = blockHeight(
+        row.rightLabelLines,
+        tier.tableTextSize,
+        2,
+      );
       const rightLabelTopY =
-        rowBottomY + curRowH - Math.max(3.5, (curRowH - rightLabelH) / 2);
+        rowBottomY + curRowH - Math.max(3, (curRowH - rightLabelH) / 2);
       drawLines(
         page,
         row.rightLabelLines,
@@ -1374,7 +1715,7 @@ function renderCoursePage(
 
       const rightValH = blockHeight(row.rightValueLines, tier.tableTextSize, 2);
       const rightValTopY =
-        rowBottomY + curRowH - Math.max(3.5, (curRowH - rightValH) / 2);
+        rowBottomY + curRowH - Math.max(3, (curRowH - rightValH) / 2);
       drawLines(
         page,
         row.rightValueLines,
@@ -1390,14 +1731,12 @@ function renderCoursePage(
     currentRowTopY = rowBottomY;
   });
 
-  // Vertical center divider between left pair and right pair
   page.drawLine({
     start: { x: startX + halfW, y: tableTopY },
     end: { x: startX + halfW, y: tableTopY - layout.englishTableHeight },
     thickness: 0.75,
     color: COLORS.borderStrong,
   });
-  // Light vertical dividers before score columns
   page.drawLine({
     start: { x: startX + labelColW, y: tableTopY - rowH },
     end: { x: startX + labelColW, y: tableTopY - layout.englishTableHeight },
@@ -1413,17 +1752,15 @@ function renderCoursePage(
     thickness: 0.5,
     color: COLORS.border,
   });
-  void scoreColW;
 
-  y -= layout.englishTableHeight + 6;
+  y -= layout.englishTableHeight + 5;
 
-  // Separate clearly labeled English Waiver subsection
   page.drawText('English Waiver Criteria', {
     x: startX,
     y: y - tier.labelSize * 0.85,
     size: tier.labelSize + 0.5,
     font: fonts.bold,
-    color: COLORS.navySecondary,
+    color: COLORS.brandDark,
   });
   y -= tier.labelSize + 4;
 
@@ -1471,7 +1808,7 @@ function renderCoursePage(
         valIsNotSpec ? fonts.regular : fonts.semiBold,
         tier.bodySize,
         tier.lineGap,
-        valIsNotSpec ? COLORS.textMuted : COLORS.navyPrimary,
+        valIsNotSpec ? COLORS.textMuted : COLORS.brandDark,
       );
     });
   } else {
@@ -1491,113 +1828,863 @@ function renderCoursePage(
     });
   }
 
-  // 7. Footer (strictly outside content area at fixed bottom coordinates)
-  page.drawLine({
-    start: { x: startX, y: FOOTER_RULE_Y },
-    end: { x: startX + contentWidth, y: FOOTER_RULE_Y },
-    thickness: 0.75,
-    color: COLORS.borderStrong,
-  });
-
-  const footerTopLineY = 47;
-  const websiteLabel = 'University Website: ';
-  const websiteLabelSize = 8.5;
-  const labelW = measureWidth(fonts.medium, websiteLabel, websiteLabelSize);
-  page.drawText(websiteLabel, {
-    x: startX,
-    y: footerTopLineY,
-    size: websiteLabelSize,
-    font: fonts.medium,
-    color: COLORS.textSecondary,
-  });
-
-  // Right-side brand + pagination coordinates
-  const rightFooterText = `${BRAND_CONFIG.brandName}   •   Page ${pageIndex + 1} of ${totalPages}`;
-  const rightFooterW = measureWidth(fonts.semiBold, rightFooterText, 8.5);
-  const rightFooterX = startX + contentWidth - rightFooterW;
-
-  // Draw clickable university website link BEFORE right-side text for natural reading order
-  const maxUrlW = Math.max(80, rightFooterX - (startX + labelW) - 16);
-  const rawUrlDisplay = makeEncodable(
-    fonts.medium,
-    course.websiteUrlDisplay,
-    websiteLabelSize,
-  );
-  let urlSize = websiteLabelSize;
-  while (
-    urlSize > 6.5 &&
-    measureWidth(fonts.medium, rawUrlDisplay, urlSize) > maxUrlW
-  ) {
-    urlSize -= 0.5;
-  }
-
-  const urlColor = course.websiteHref ? COLORS.navySecondary : COLORS.textMuted;
-  const urlX = startX + labelW;
-  const urlW = measureWidth(fonts.medium, rawUrlDisplay, urlSize);
-
-  page.drawText(rawUrlDisplay, {
-    x: urlX,
-    y: footerTopLineY,
-    size: urlSize,
-    font: fonts.medium,
-    color: urlColor,
-  });
-
-  if (course.websiteHref) {
-    page.drawLine({
-      start: { x: urlX, y: footerTopLineY - 1.5 },
-      end: { x: urlX + Math.min(urlW, maxUrlW), y: footerTopLineY - 1.5 },
-      thickness: 0.5,
-      color: COLORS.navySecondary,
-    });
-
-    addUriLinkAnnotation(
-      pdfDoc,
-      page,
-      [
-        urlX - 1,
-        footerTopLineY - 3,
-        urlX + Math.min(urlW, maxUrlW) + 1,
-        footerTopLineY + 10,
-      ],
-      course.websiteHref,
-    );
-  }
-
-  page.drawText(rightFooterText, {
-    x: rightFooterX,
-    y: footerTopLineY,
-    size: 8.5,
-    font: fonts.semiBold,
-    color: COLORS.navyPrimary,
-  });
-
-  // Disclaimer note
-  page.drawText(BRAND_CONFIG.footerNote, {
-    x: startX,
-    y: FOOTER_BOTTOM_PAD + 11,
-    size: 7.5,
-    font: fonts.regular,
-    color: COLORS.textMuted,
+  drawStandardFooter({
+    pdfDoc,
+    page,
+    sideMargin: tier.sideMargin,
+    fonts,
+    pageNumber,
+    totalPages,
+    leftLabelPrefix: 'University Website: ',
+    leftText: course.websiteUrlDisplay,
+    leftHref: course.websiteHref,
+    disclaimerNote: BRAND_CONFIG.footerNote,
   });
 }
+
+// ============================================================================
+// UK APPLICATION PROCESS GUIDE PAGES
+// ============================================================================
+
+const GUIDE_SIDE_MARGIN = 34;
+const GUIDE_TOP_MARGIN = 22;
+const GUIDE_HEADER_H = 46;
+const GUIDE_NAV_H = 20;
+
+interface MeasuredGuideStep {
+  step: GuideStep;
+  titleLines: string[];
+  summaryLines: string[];
+  bulletLines: string[][];
+  cardHeight: number;
+}
+
+function measureGuideSteps(fonts: EmbeddedFonts): MeasuredGuideStep[] {
+  const contentWidth = A4_WIDTH_PT - GUIDE_SIDE_MARGIN * 2;
+  const textW = contentWidth - 48;
+
+  return UK_APPLICATION_STEPS.map((step) => {
+    const titleLines = wrapText(
+      `${step.number}. ${step.title}`,
+      fonts.bold,
+      10.5,
+      textW - 115,
+    );
+    const summaryLines = wrapText(step.summary, fonts.semiBold, 9.25, textW);
+    const bulletLines = step.details.map((d) =>
+      wrapText(d, fonts.regular, 9.0, textW - 12),
+    );
+
+    const titleH = blockHeight(titleLines, 10.5, 2.2);
+    const summaryH = blockHeight(summaryLines, 9.25, 2.4);
+    const bulletsH = bulletLines.reduce(
+      (sum, lines, i) =>
+        sum +
+        blockHeight(lines, 9.0, 2.2) +
+        (i < bulletLines.length - 1 ? 3 : 0),
+      0,
+    );
+
+    const cardHeight = 8 + titleH + 4 + summaryH + 4 + bulletsH + 8;
+    return { step, titleLines, summaryLines, bulletLines, cardHeight };
+  });
+}
+
+function paginateGuideContent(fonts: EmbeddedFonts): {
+  stepPages: MeasuredGuideStep[][];
+  linksFitOnLastStepPage: boolean;
+  linksCardHeight: number;
+  calloutHeight: number;
+  calloutLines: string[];
+} {
+  const contentWidth = A4_WIDTH_PT - GUIDE_SIDE_MARGIN * 2;
+  const topY =
+    A4_HEIGHT_PT - GUIDE_TOP_MARGIN - GUIDE_HEADER_H - GUIDE_NAV_H - 12;
+
+  const calloutText =
+    'University admission rules (academic grades, English waivers, deposits, and pre-CAS interviews set by each institution) are separate from UK Student visa rules (CAS, financial evidence, ATAS, TB screening, Immigration Health Surcharge, and digital eVisa status set by UKVI). Do not assume automatic fee thresholds, processing times, or guaranteed visa outcomes—always verify current figures on the official GOV.UK links below.';
+  const calloutLines = wrapText(
+    calloutText,
+    fonts.regular,
+    9.0,
+    contentWidth - 20,
+  );
+  const calloutHeight = 8 + 13 + 3 + blockHeight(calloutLines, 9.0, 2.4) + 8;
+
+  const measuredSteps = measureGuideSteps(fonts);
+  const stepPages: MeasuredGuideStep[][] = [[]];
+  let curY = topY - calloutHeight - 10;
+
+  for (const item of measuredSteps) {
+    if (curY - item.cardHeight < MIN_CONTENT_BOTTOM_Y && stepPages[stepPages.length - 1].length > 0) {
+      stepPages.push([]);
+      curY = topY;
+    }
+    stepPages[stepPages.length - 1].push(item);
+    curY -= item.cardHeight + 8;
+  }
+
+  // Official Guidance Links card height (2-column link rows)
+  const linkColW = (contentWidth - 28) / 2;
+  const linkRowHeights: number[] = [];
+  for (let i = 0; i < OFFICIAL_GUIDANCE_LINKS.length; i += 2) {
+    const leftLines = wrapText(
+      OFFICIAL_GUIDANCE_LINKS[i].label,
+      fonts.semiBold,
+      9.0,
+      linkColW,
+    );
+    const rightLines =
+      i + 1 < OFFICIAL_GUIDANCE_LINKS.length
+        ? wrapText(
+            OFFICIAL_GUIDANCE_LINKS[i + 1].label,
+            fonts.semiBold,
+            9.0,
+            linkColW,
+          )
+        : [];
+    const lh = blockHeight(leftLines, 9.0, 1.8) + 11; // label + small URL line
+    const rh =
+      rightLines.length > 0 ? blockHeight(rightLines, 9.0, 1.8) + 11 : 0;
+    linkRowHeights.push(Math.max(lh, rh));
+  }
+
+  const linksCardHeight =
+    26 +
+    linkRowHeights.reduce((s, h) => s + h, 0) +
+    Math.max(0, linkRowHeights.length - 1) * 7 +
+    12;
+
+  const linksFitOnLastStepPage =
+    curY - (linksCardHeight + 24) >= MIN_CONTENT_BOTTOM_Y;
+
+  return {
+    stepPages,
+    linksFitOnLastStepPage,
+    linksCardHeight,
+    calloutHeight,
+    calloutLines,
+  };
+}
+
+function renderGuidePages(options: {
+  pdfDoc: PDFDocument;
+  guidePages: PDFPage[];
+  plan: ReturnType<typeof paginateGuideContent>;
+  fonts: EmbeddedFonts;
+  embeddedLogo: PDFImage | null;
+  studentName: string;
+  startPageNumber: number;
+  totalPages: number;
+  shortlistStartPage: PDFPage;
+  checklistStartPage: PDFPage;
+}): void {
+  const {
+    pdfDoc,
+    guidePages,
+    plan,
+    fonts,
+    embeddedLogo,
+    studentName,
+    startPageNumber,
+    totalPages,
+    shortlistStartPage,
+    checklistStartPage,
+  } = options;
+
+  const startX = GUIDE_SIDE_MARGIN;
+  const contentWidth = A4_WIDTH_PT - GUIDE_SIDE_MARGIN * 2;
+
+  const drawLinksCard = (page: PDFPage, topY: number) => {
+    let y = drawSectionHeading(
+      page,
+      'OFFICIAL UKVI & UNIVERSITY GUIDANCE LINKS',
+      startX,
+      topY,
+      contentWidth,
+      fonts.bold,
+      9.5,
+    );
+
+    page.drawRectangle({
+      x: startX,
+      y: y - plan.linksCardHeight,
+      width: contentWidth,
+      height: plan.linksCardHeight,
+      color: COLORS.surfaceTint,
+      borderColor: COLORS.border,
+      borderWidth: 0.75,
+    });
+
+    const headerNote = `Official sources verified for ${studentName} — Guidance checked on ${GUIDANCE_CHECKED_DATE}`;
+    page.drawText(makeEncodable(fonts.semiBold, headerNote, 9.0), {
+      x: startX + 10,
+      y: y - 16,
+      size: 9.0,
+      font: fonts.semiBold,
+      color: COLORS.brandDark,
+    });
+
+    const linkColW = (contentWidth - 28) / 2;
+    let ly = y - 28;
+
+    for (let i = 0; i < OFFICIAL_GUIDANCE_LINKS.length; i += 2) {
+      const pair = [
+        OFFICIAL_GUIDANCE_LINKS[i],
+        OFFICIAL_GUIDANCE_LINKS[i + 1] ?? null,
+      ];
+      let maxPairH = 0;
+
+      pair.forEach((item, colIdx) => {
+        if (!item) return;
+        const colX = startX + 10 + colIdx * (linkColW + 10);
+        const labelLines = wrapText(item.label, fonts.semiBold, 9.0, linkColW);
+        drawLines(
+          page,
+          labelLines,
+          colX,
+          ly,
+          fonts.semiBold,
+          9.0,
+          1.8,
+          COLORS.brandDark,
+        );
+        const labelH = blockHeight(labelLines, 9.0, 1.8);
+        const urlTopY = ly - labelH - 1.5;
+
+        let urlDisplay = makeEncodable(fonts.regular, item.url, 7.75);
+        let urlSize = 7.75;
+        while (
+          urlSize > 6.5 &&
+          measureWidth(fonts.regular, urlDisplay, urlSize) > linkColW
+        ) {
+          urlSize -= 0.25;
+        }
+        const urlW = measureWidth(fonts.regular, urlDisplay, urlSize);
+        page.drawText(urlDisplay, {
+          x: colX,
+          y: urlTopY - urlSize * 0.85,
+          size: urlSize,
+          font: fonts.regular,
+          color: COLORS.brandPrimary,
+        });
+        page.drawLine({
+          start: { x: colX, y: urlTopY - urlSize * 0.85 - 1.2 },
+          end: {
+            x: colX + Math.min(urlW, linkColW),
+            y: urlTopY - urlSize * 0.85 - 1.2,
+          },
+          thickness: 0.45,
+          color: COLORS.brandPrimary,
+        });
+
+        addUriLinkAnnotation(
+          pdfDoc,
+          page,
+          [
+            colX,
+            urlTopY - urlSize - 2,
+            colX + Math.max(measureWidth(fonts.semiBold, labelLines[0] ?? '', 9.0), Math.min(urlW, linkColW)),
+            ly + 1,
+          ],
+          item.url,
+        );
+
+        maxPairH = Math.max(maxPairH, labelH + 11);
+      });
+
+      ly -= maxPairH + 7;
+    }
+  };
+
+  guidePages.forEach((page, pageIdx) => {
+    const navBottomY = drawPageHeaderAndNav({
+      pdfDoc,
+      page,
+      topMargin: GUIDE_TOP_MARGIN,
+      sideMargin: GUIDE_SIDE_MARGIN,
+      headerHeight: GUIDE_HEADER_H,
+      navStripHeight: GUIDE_NAV_H,
+      sectionLabel: 'UK Application Process',
+      subLabel:
+        guidePages.length > 1
+          ? `Guide Part ${pageIdx + 1} of ${guidePages.length}`
+          : 'Step-by-Step Guide',
+      studentName,
+      fonts,
+      embeddedLogo,
+      navLinks: [
+        { label: 'Back to Course Shortlist', targetPage: shortlistStartPage },
+        { label: 'Required Documents Checklist', targetPage: checklistStartPage },
+      ],
+    });
+
+    let y = navBottomY - 12;
+
+    if (pageIdx === 0) {
+      // Distinction callout + Guidance checked date
+      page.drawRectangle({
+        x: startX,
+        y: y - plan.calloutHeight,
+        width: contentWidth,
+        height: plan.calloutHeight,
+        color: COLORS.brandSoft,
+        borderColor: COLORS.brandBorder,
+        borderWidth: 0.75,
+      });
+      page.drawRectangle({
+        x: startX,
+        y: y - plan.calloutHeight,
+        width: 3.5,
+        height: plan.calloutHeight,
+        color: COLORS.brandPrimary,
+      });
+
+      page.drawText('Important Distinction: University Admissions vs UK Student Visa', {
+        x: startX + 10,
+        y: y - 15,
+        size: 9.5,
+        font: fonts.bold,
+        color: COLORS.brandDark,
+      });
+
+      const checkedTag = `Guidance checked on ${GUIDANCE_CHECKED_DATE}`;
+      const checkedW = measureWidth(fonts.semiBold, checkedTag, 8.25);
+      page.drawText(checkedTag, {
+        x: startX + contentWidth - checkedW - 10,
+        y: y - 15,
+        size: 8.25,
+        font: fonts.semiBold,
+        color: COLORS.brandPrimary,
+      });
+
+      drawLines(
+        page,
+        plan.calloutLines,
+        startX + 10,
+        y - 23,
+        fonts.regular,
+        9.0,
+        2.4,
+        COLORS.textPrimary,
+      );
+
+      y -= plan.calloutHeight + 10;
+    }
+
+    const stepsForPage = plan.stepPages[pageIdx] ?? [];
+    for (const item of stepsForPage) {
+      page.drawRectangle({
+        x: startX,
+        y: y - item.cardHeight,
+        width: contentWidth,
+        height: item.cardHeight,
+        color: COLORS.white,
+        borderColor: COLORS.border,
+        borderWidth: 0.75,
+      });
+
+      // Numbered badge
+      const badgeCenterX = startX + 19;
+      const badgeCenterY = y - 15;
+      page.drawCircle({
+        x: badgeCenterX,
+        y: badgeCenterY,
+        size: 9.5,
+        color: COLORS.brandPrimary,
+      });
+      const numStr = String(item.step.number);
+      const numW = measureWidth(fonts.bold, numStr, 9.5);
+      page.drawText(numStr, {
+        x: badgeCenterX - numW / 2,
+        y: badgeCenterY - 3.3,
+        size: 9.5,
+        font: fonts.bold,
+        color: COLORS.white,
+      });
+
+      // Scope pill on top right of card
+      const scopeW = measureWidth(fonts.semiBold, item.step.scope, 7.75) + 12;
+      const scopeX = startX + contentWidth - scopeW - 10;
+      page.drawRectangle({
+        x: scopeX,
+        y: y - 20,
+        width: scopeW,
+        height: 14,
+        color: COLORS.surfaceTint,
+        borderColor: COLORS.brandBorder,
+        borderWidth: 0.5,
+      });
+      page.drawText(item.step.scope, {
+        x: scopeX + 6,
+        y: y - 15.5,
+        size: 7.75,
+        font: fonts.semiBold,
+        color: COLORS.brandDark,
+      });
+
+      let cy = y - 8;
+      drawLines(
+        page,
+        item.titleLines,
+        startX + 36,
+        cy,
+        fonts.bold,
+        10.5,
+        2.2,
+        COLORS.brandDark,
+      );
+      cy -= blockHeight(item.titleLines, 10.5, 2.2) + 4;
+
+      drawLines(
+        page,
+        item.summaryLines,
+        startX + 36,
+        cy,
+        fonts.semiBold,
+        9.25,
+        2.4,
+        COLORS.textPrimary,
+      );
+      cy -= blockHeight(item.summaryLines, 9.25, 2.4) + 4;
+
+      item.bulletLines.forEach((bLines) => {
+        page.drawCircle({
+          x: startX + 39,
+          y: cy - 4,
+          size: 1.7,
+          color: COLORS.brandPrimary,
+        });
+        drawLines(
+          page,
+          bLines,
+          startX + 47,
+          cy,
+          fonts.regular,
+          9.0,
+          2.2,
+          COLORS.textSecondary,
+        );
+        cy -= blockHeight(bLines, 9.0, 2.2) + 3;
+      });
+
+      y -= item.cardHeight + 8;
+    }
+
+    const isLastGuidePage = pageIdx === guidePages.length - 1;
+    if (isLastGuidePage) {
+      drawLinksCard(page, y - 2);
+    }
+
+    drawStandardFooter({
+      pdfDoc,
+      page,
+      sideMargin: GUIDE_SIDE_MARGIN,
+      fonts,
+      pageNumber: startPageNumber + pageIdx,
+      totalPages,
+      leftText: `Guidance checked on ${GUIDANCE_CHECKED_DATE} — Official GOV.UK & UKCISA sources`,
+      disclaimerNote:
+        'Check official GOV.UK pages and your university offer letter for live fees, maintenance thresholds, and policy updates.',
+    });
+  });
+}
+
+// ============================================================================
+// REQUIRED DOCUMENTS CHECKLIST PAGES (WITH INTERACTIVE ACROFORM CHECKBOXES)
+// ============================================================================
+
+interface MeasuredChecklistGroup {
+  group: ChecklistGroup;
+  noteLines: string[];
+  items: Array<{
+    item: ChecklistGroup['items'][number];
+    labelLines: string[];
+    noteLines: string[];
+    rowHeight: number;
+  }>;
+  cardHeight: number;
+}
+
+function measureChecklistGroups(fonts: EmbeddedFonts): MeasuredChecklistGroup[] {
+  const contentWidth = A4_WIDTH_PT - GUIDE_SIDE_MARGIN * 2;
+  const itemTextW = contentWidth - 46 - 102; // checkbox col + status badge col
+
+  return DOCUMENT_CHECKLIST_GROUPS.map((group) => {
+    const noteLines = wrapText(
+      group.circumstanceNote,
+      fonts.regular,
+      9.0,
+      contentWidth - 20,
+    );
+    const headerH = 22 + blockHeight(noteLines, 9.0, 2.0) + 6;
+
+    const measuredItems = group.items.map((item) => {
+      const labelLines = wrapText(item.label, fonts.semiBold, 9.5, itemTextW);
+      const itemNoteLines = wrapText(
+        item.note,
+        fonts.regular,
+        9.0,
+        itemTextW,
+      );
+      const rowHeight =
+        6 +
+        blockHeight(labelLines, 9.5, 2.0) +
+        2.5 +
+        blockHeight(itemNoteLines, 9.0, 2.0) +
+        6;
+      return { item, labelLines, noteLines: itemNoteLines, rowHeight };
+    });
+
+    const cardHeight =
+      headerH + measuredItems.reduce((sum, r) => sum + r.rowHeight, 0);
+    return { group, noteLines, items: measuredItems, cardHeight };
+  });
+}
+
+function paginateChecklistContent(fonts: EmbeddedFonts): {
+  groupPages: MeasuredChecklistGroup[][];
+  bannerLines: string[];
+  bannerHeight: number;
+} {
+  const contentWidth = A4_WIDTH_PT - GUIDE_SIDE_MARGIN * 2;
+  const topY =
+    A4_HEIGHT_PT - GUIDE_TOP_MARGIN - GUIDE_HEADER_H - GUIDE_NAV_H - 12;
+
+  const bannerLines = wrapText(
+    `${CHECKLIST_READER_INSTRUCTION} Status badges distinguish items that are Generally required from those that are If applicable depending on the university, course subject, or personal circumstances.`,
+    fonts.medium,
+    9.0,
+    contentWidth - 20,
+  );
+  const bannerHeight = 8 + 13 + 3 + blockHeight(bannerLines, 9.0, 2.2) + 8;
+
+  const groups = measureChecklistGroups(fonts);
+  const groupPages: MeasuredChecklistGroup[][] = [[]];
+  let curY = topY - bannerHeight - 10;
+
+  for (const grp of groups) {
+    if (
+      curY - grp.cardHeight < MIN_CONTENT_BOTTOM_Y &&
+      groupPages[groupPages.length - 1].length > 0
+    ) {
+      groupPages.push([]);
+      curY = topY;
+    }
+    groupPages[groupPages.length - 1].push(grp);
+    curY -= grp.cardHeight + 10;
+  }
+
+  return { groupPages, bannerLines, bannerHeight };
+}
+
+function renderChecklistPages(options: {
+  pdfDoc: PDFDocument;
+  checklistPages: PDFPage[];
+  plan: ReturnType<typeof paginateChecklistContent>;
+  checklistSelections: ChecklistSelections;
+  fonts: EmbeddedFonts;
+  embeddedLogo: PDFImage | null;
+  studentName: string;
+  startPageNumber: number;
+  totalPages: number;
+  shortlistStartPage: PDFPage;
+  guideStartPage: PDFPage;
+}): void {
+  const {
+    pdfDoc,
+    checklistPages,
+    plan,
+    checklistSelections,
+    fonts,
+    embeddedLogo,
+    studentName,
+    startPageNumber,
+    totalPages,
+    shortlistStartPage,
+    guideStartPage,
+  } = options;
+
+  const startX = GUIDE_SIDE_MARGIN;
+  const contentWidth = A4_WIDTH_PT - GUIDE_SIDE_MARGIN * 2;
+  const form = pdfDoc.getForm();
+
+  checklistPages.forEach((page, pageIdx) => {
+    const navBottomY = drawPageHeaderAndNav({
+      pdfDoc,
+      page,
+      topMargin: GUIDE_TOP_MARGIN,
+      sideMargin: GUIDE_SIDE_MARGIN,
+      headerHeight: GUIDE_HEADER_H,
+      navStripHeight: GUIDE_NAV_H,
+      sectionLabel: 'Required Documents Checklist',
+      subLabel:
+        checklistPages.length > 1
+          ? `Checklist Part ${pageIdx + 1} of ${checklistPages.length}`
+          : 'Interactive Checklist',
+      studentName,
+      fonts,
+      embeddedLogo,
+      navLinks: [
+        { label: 'Back to Course Shortlist', targetPage: shortlistStartPage },
+        { label: 'UK Application Process', targetPage: guideStartPage },
+      ],
+    });
+
+    let y = navBottomY - 12;
+
+    if (pageIdx === 0) {
+      page.drawRectangle({
+        x: startX,
+        y: y - plan.bannerHeight,
+        width: contentWidth,
+        height: plan.bannerHeight,
+        color: COLORS.brandSoft,
+        borderColor: COLORS.brandBorder,
+        borderWidth: 0.75,
+      });
+      page.drawRectangle({
+        x: startX,
+        y: y - plan.bannerHeight,
+        width: 3.5,
+        height: plan.bannerHeight,
+        color: COLORS.brandPrimary,
+      });
+
+      page.drawText(
+        makeEncodable(
+          fonts.bold,
+          `Interactive Checklist for ${studentName}`,
+          9.5,
+        ),
+        {
+          x: startX + 10,
+          y: y - 15,
+          size: 9.5,
+          font: fonts.bold,
+          color: COLORS.brandDark,
+        },
+      );
+
+      drawLines(
+        page,
+        plan.bannerLines,
+        startX + 10,
+        y - 23,
+        fonts.medium,
+        9.0,
+        2.2,
+        COLORS.textPrimary,
+      );
+
+      y -= plan.bannerHeight + 10;
+    }
+
+    const groupsOnPage = plan.groupPages[pageIdx] ?? [];
+    for (const grp of groupsOnPage) {
+      const headerBandH =
+        22 + blockHeight(grp.noteLines, 9.0, 2.0) + 6;
+
+      page.drawRectangle({
+        x: startX,
+        y: y - grp.cardHeight,
+        width: contentWidth,
+        height: grp.cardHeight,
+        color: COLORS.white,
+        borderColor: COLORS.borderStrong,
+        borderWidth: 0.75,
+      });
+
+      page.drawRectangle({
+        x: startX + 0.5,
+        y: y - headerBandH,
+        width: contentWidth - 1,
+        height: headerBandH - 0.5,
+        color: COLORS.surfaceTint,
+      });
+
+      page.drawText(grp.group.title.toUpperCase(), {
+        x: startX + 10,
+        y: y - 15,
+        size: 9.5,
+        font: fonts.bold,
+        color: COLORS.brandDark,
+      });
+
+      drawLines(
+        page,
+        grp.noteLines,
+        startX + 10,
+        y - 23,
+        fonts.regular,
+        9.0,
+        2.0,
+        COLORS.textSecondary,
+      );
+
+      let rowTopY = y - headerBandH;
+
+      grp.items.forEach((entry, idx) => {
+        page.drawLine({
+          start: { x: startX, y: rowTopY },
+          end: { x: startX + contentWidth, y: rowTopY },
+          thickness: 0.5,
+          color: COLORS.border,
+        });
+
+        if (idx % 2 === 1) {
+          page.drawRectangle({
+            x: startX + 0.5,
+            y: rowTopY - entry.rowHeight,
+            width: contentWidth - 1,
+            height: entry.rowHeight,
+            color: COLORS.surfaceTint,
+          });
+        }
+
+        // Genuine interactive AcroForm CheckBox with unique field name & accessible label (/TU)
+        const boxSize = 13;
+        const boxX = startX + 12;
+        const boxY = rowTopY - 6 - boxSize + 1;
+        const accessibleLabel = `${grp.group.title}: ${entry.item.label} (${entry.item.status})`;
+
+        const checkBox = form.createCheckBox(entry.item.fieldName);
+        checkBox.addToPage(page, {
+          x: boxX,
+          y: boxY,
+          width: boxSize,
+          height: boxSize,
+          borderWidth: 1.1,
+          borderColor: COLORS.brandPrimary,
+          backgroundColor: COLORS.white,
+          textColor: COLORS.brandDark,
+        });
+
+        checkBox.acroField.dict.set(
+          PDFName.of('TU'),
+          PDFString.of(accessibleLabel),
+        );
+        for (const widget of checkBox.acroField.getWidgets()) {
+          widget.dict.set(PDFName.of('TU'), PDFString.of(accessibleLabel));
+        }
+
+        if (checklistSelections[entry.item.fieldName]) {
+          checkBox.check();
+        } else {
+          checkBox.uncheck();
+        }
+
+        // Label
+        const textX = startX + 34;
+        drawLines(
+          page,
+          entry.labelLines,
+          textX,
+          rowTopY - 6,
+          fonts.semiBold,
+          9.5,
+          2.0,
+          COLORS.textPrimary,
+        );
+
+        // Status pill ("Generally required" | "If applicable")
+        const isGeneral = entry.item.status === 'Generally required';
+        const pillW = 86;
+        const pillH = 14.5;
+        const pillX = startX + contentWidth - pillW - 10;
+        const pillY = rowTopY - 19;
+
+        page.drawRectangle({
+          x: pillX,
+          y: pillY,
+          width: pillW,
+          height: pillH,
+          color: isGeneral ? COLORS.brandSoft : COLORS.slateBadgeBg,
+          borderColor: isGeneral ? COLORS.brandBorder : COLORS.borderStrong,
+          borderWidth: 0.6,
+        });
+
+        const statusW = measureWidth(fonts.semiBold, entry.item.status, 7.75);
+        page.drawText(entry.item.status, {
+          x: pillX + (pillW - statusW) / 2,
+          y: pillY + 4.3,
+          size: 7.75,
+          font: fonts.semiBold,
+          color: isGeneral ? COLORS.brandDark : COLORS.textSecondary,
+        });
+
+        // Circumstance note
+        const labelH = blockHeight(entry.labelLines, 9.5, 2.0);
+        drawLines(
+          page,
+          entry.noteLines,
+          textX,
+          rowTopY - 6 - labelH - 2.5,
+          fonts.regular,
+          9.0,
+          2.0,
+          COLORS.textSecondary,
+        );
+
+        rowTopY -= entry.rowHeight;
+      });
+
+      y -= grp.cardHeight + 10;
+    }
+
+    drawStandardFooter({
+      pdfDoc,
+      page,
+      sideMargin: GUIDE_SIDE_MARGIN,
+      fonts,
+      pageNumber: startPageNumber + pageIdx,
+      totalPages,
+      leftText: `Prepared for ${studentName} — Guidance checked on ${GUIDANCE_CHECKED_DATE}`,
+      disclaimerNote: CHECKLIST_READER_INSTRUCTION,
+    });
+  });
+}
+
+// ============================================================================
+// MAIN DOCUMENT BUILDER
+// ============================================================================
 
 export interface GeneratePdfOptions {
   courses: CourseRecord[];
   currency: CurrencyCode | null;
+  studentName: string;
+  checklistSelections?: ChecklistSelections;
   logo?: InMemoryLogo | null;
   fontBytes?: FontBytesBundle;
 }
 
 /**
- * Generates one combined A4 portrait PDF with exactly one course per page.
- * Validates strict single-page fitting before producing bytes; if any course
- * overflows at minimum readable 9pt text, blocks export and returns detailed errors.
+ * Generates one combined A4 portrait PDF:
+ * 1. Course shortlist (exactly one course per page)
+ * 2. UK Application Process guide
+ * 3. Interactive Required Documents Checklist
+ * Blocks export with a clear course error if any course overflows one A4 page at 9pt minimum.
  */
 export async function generateCourseShortlistPdf(
   options: GeneratePdfOptions,
 ): Promise<PdfGenerationResult> {
-  const { courses, currency, logo = null, fontBytes } = options;
+  const {
+    courses,
+    currency,
+    studentName,
+    checklistSelections = {},
+    logo = null,
+    fontBytes,
+  } = options;
+
+  const trimmedStudentName = studentName.trim();
+  if (!trimmedStudentName) {
+    return {
+      ok: false,
+      failures: [],
+      message: 'Student Name is required before generating the personalized PDF.',
+    };
+  }
 
   if (courses.length === 0) {
     return {
@@ -1611,7 +2698,9 @@ export async function generateCourseShortlistPdf(
 
   const pdfDoc = await PDFDocument.create();
   pdfDoc.registerFontkit(fontkit);
-  pdfDoc.setTitle(`${BRAND_CONFIG.brandName} — ${BRAND_CONFIG.documentTitle}`);
+  pdfDoc.setTitle(
+    `${BRAND_CONFIG.brandName} — ${BRAND_CONFIG.documentTitle} (${trimmedStudentName})`,
+  );
   pdfDoc.setCreator(BRAND_CONFIG.brandName);
   pdfDoc.setProducer(BRAND_CONFIG.brandName);
 
@@ -1624,13 +2713,13 @@ export async function generateCourseShortlistPdf(
   const fonts: EmbeddedFonts = { regular, medium, semiBold, bold };
 
   // Measure every course strictly BEFORE drawing
-  const layouts: MeasuredCourseLayout[] = [];
+  const courseLayouts: MeasuredCourseLayout[] = [];
   const failures: PageFitFailure[] = [];
 
   courses.forEach((course, idx) => {
     const decision = selectBestLayoutForCourse(course, currency, fonts);
     if (decision.ok) {
-      layouts.push(decision.layout);
+      courseLayouts.push(decision.layout);
     } else {
       failures.push({
         courseNumber: idx + 1,
@@ -1657,44 +2746,102 @@ export async function generateCourseShortlistPdf(
     };
   }
 
-  // Embed optional logo (uploaded in memory or configured path)
+  // Embed logo (custom uploaded override or bundled Eccho Overseas default logo)
   let embeddedLogo: PDFImage | null = null;
   if (logo) {
     embeddedLogo =
       logo.mimeType === 'image/png'
         ? await pdfDoc.embedPng(logo.bytes)
         : await pdfDoc.embedJpg(logo.bytes);
-  } else if (BRAND_CONFIG.logoAssetPath) {
-    const resp = await fetch(BRAND_CONFIG.logoAssetPath);
-    if (resp.ok) {
-      const bytes = new Uint8Array(await resp.arrayBuffer());
-      const contentType = resp.headers.get('content-type') ?? '';
-      embeddedLogo = contentType.includes('png')
-        ? await pdfDoc.embedPng(bytes)
-        : await pdfDoc.embedJpg(bytes);
+  } else {
+    const defaultLogo = await loadDefaultBrandLogo();
+    if (defaultLogo) {
+      embeddedLogo =
+        defaultLogo.mimeType === 'image/png'
+          ? await pdfDoc.embedPng(defaultLogo.bytes)
+          : await pdfDoc.embedJpg(defaultLogo.bytes);
     }
   }
 
-  const totalPages = courses.length;
+  // Paginate Guide & Checklist sections
+  const guidePlan = paginateGuideContent(fonts);
+  const guidePageCount =
+    guidePlan.stepPages.length + (guidePlan.linksFitOnLastStepPage ? 0 : 1);
+
+  const checklistPlan = paginateChecklistContent(fonts);
+  const checklistPageCount = checklistPlan.groupPages.length;
+
+  // Create all PDF pages upfront so internal /GoTo links can resolve forward/backward refs
+  const coursePages = courses.map(() =>
+    pdfDoc.addPage([A4_WIDTH_PT, A4_HEIGHT_PT]),
+  );
+  const guidePages = Array.from({ length: guidePageCount }, () =>
+    pdfDoc.addPage([A4_WIDTH_PT, A4_HEIGHT_PT]),
+  );
+  const checklistPages = Array.from({ length: checklistPageCount }, () =>
+    pdfDoc.addPage([A4_WIDTH_PT, A4_HEIGHT_PT]),
+  );
+
+  const totalPages = pdfDoc.getPageCount();
+  const guideStartPageNum = coursePages.length + 1;
+  const checklistStartPageNum = coursePages.length + guidePages.length + 1;
+
+  // 1. Render Course Shortlist Pages (1 course per page)
   for (let i = 0; i < courses.length; i += 1) {
-    const page = pdfDoc.addPage([A4_WIDTH_PT, A4_HEIGHT_PT]);
-    renderCoursePage(
+    renderCoursePage({
       pdfDoc,
-      page,
-      courses[i],
-      layouts[i],
+      page: coursePages[i],
+      course: courses[i],
+      layout: courseLayouts[i],
       fonts,
       embeddedLogo,
-      i,
+      studentName: trimmedStudentName,
+      courseIndex: i,
+      courseCount: courses.length,
+      pageNumber: i + 1,
       totalPages,
-    );
+      guideStartPage: guidePages[0],
+      checklistStartPage: checklistPages[0],
+    });
   }
+
+  // 2. Render UK Application Process Guide Pages
+  renderGuidePages({
+    pdfDoc,
+    guidePages,
+    plan: guidePlan,
+    fonts,
+    embeddedLogo,
+    studentName: trimmedStudentName,
+    startPageNumber: guideStartPageNum,
+    totalPages,
+    shortlistStartPage: coursePages[0],
+    checklistStartPage: checklistPages[0],
+  });
+
+  // 3. Render Required Documents Checklist Pages (with interactive checkboxes)
+  renderChecklistPages({
+    pdfDoc,
+    checklistPages,
+    plan: checklistPlan,
+    checklistSelections,
+    fonts,
+    embeddedLogo,
+    studentName: trimmedStudentName,
+    startPageNumber: checklistStartPageNum,
+    totalPages,
+    shortlistStartPage: coursePages[0],
+    guideStartPage: guidePages[0],
+  });
 
   const pdfBytes = await pdfDoc.save();
   return {
     ok: true,
     pdfBytes,
     pageCount: totalPages,
-    tiersUsed: layouts.map((l) => l.tier.name),
+    coursePageCount: coursePages.length,
+    guideStartPage: guideStartPageNum,
+    checklistStartPage: checklistStartPageNum,
+    tiersUsed: courseLayouts.map((l) => l.tier.name),
   };
 }

@@ -10,7 +10,9 @@ import {
 } from 'react';
 import {
   AlertCircle,
+  BookOpenCheck,
   CheckCircle2,
+  CheckSquare,
   ChevronLeft,
   ChevronRight,
   Download,
@@ -23,7 +25,13 @@ import {
 import { PdfPreviewCanvas } from './components/PdfPreviewCanvas';
 import { BRAND_CONFIG, getNonEmptyContactEntries } from './config/brand';
 import {
+  CHECKLIST_READER_INSTRUCTION,
+  DOCUMENT_CHECKLIST_GROUPS,
+  GUIDANCE_CHECKED_DATE,
+} from './config/ukGuide';
+import {
   CURRENCY_OPTIONS,
+  type ChecklistSelections,
   type CourseRecord,
   type CurrencyCode,
   type InMemoryLogo,
@@ -38,7 +46,21 @@ import { loadLogoInMemory } from './utils/logoLoader';
 import { generateCourseShortlistPdf } from './utils/pdfGenerator';
 import { buildShortlistFilename, formatTuitionFee } from './utils/valueFormatting';
 
+interface PdfPlanMeta {
+  pageCount: number;
+  coursePageCount: number;
+  guideStartPage: number;
+  checklistStartPage: number;
+}
+
+const TOTAL_CHECKLIST_ITEMS = DOCUMENT_CHECKLIST_GROUPS.reduce(
+  (sum, grp) => sum + grp.items.length,
+  0,
+);
+
 export function App() {
+  const studentNameId = useId();
+  const studentNameHintId = useId();
   const excelInputId = useId();
   const logoInputId = useId();
   const sheetSelectId = useId();
@@ -49,13 +71,19 @@ export function App() {
   const pdfObjectUrlRef = useRef<string | null>(null);
   const logoObjectUrlRef = useRef<string | null>(null);
 
+  const [studentName, setStudentName] = useState<string>('');
+  const [studentNameTouched, setStudentNameTouched] = useState<boolean>(false);
+
   const [session, setSession] = useState<WorkbookSession | null>(null);
   const [selectedSheet, setSelectedSheet] = useState<string>('');
   const [selectedCurrency, setSelectedCurrency] = useState<CurrencyCode | ''>('');
   const [courses, setCourses] = useState<CourseRecord[]>([]);
-  const [activeCourseIndex, setActiveCourseIndex] = useState<number>(0);
+  const [activePageNumber, setActivePageNumber] = useState<number>(1);
 
-  const [logo, setLogo] = useState<InMemoryLogo | null>(null);
+  const [checklistSelections, setChecklistSelections] =
+    useState<ChecklistSelections>({});
+
+  const [customLogo, setCustomLogo] = useState<InMemoryLogo | null>(null);
   const [isParsing, setIsParsing] = useState<boolean>(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
   const [isDragOver, setIsDragOver] = useState<boolean>(false);
@@ -65,9 +93,15 @@ export function App() {
   const [logoError, setLogoError] = useState<string | null>(null);
 
   const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
+  const [pdfPlan, setPdfPlan] = useState<PdfPlanMeta | null>(null);
   const [pdfObjectUrl, setPdfObjectUrl] = useState<string | null>(null);
 
   const contactEntries = useMemo(() => getNonEmptyContactEntries(), []);
+  const trimmedStudentName = studentName.trim();
+  const checkedCount = useMemo(
+    () => Object.values(checklistSelections).filter(Boolean).length,
+    [checklistSelections],
+  );
 
   const revokePdfUrl = useCallback(() => {
     if (pdfObjectUrlRef.current) {
@@ -84,7 +118,6 @@ export function App() {
     }
   }, []);
 
-  // Cleanup any object URLs on unmount
   useEffect(() => {
     return () => {
       if (pdfObjectUrlRef.current) {
@@ -108,11 +141,12 @@ export function App() {
     try {
       const parsed = parseCoursesFromSheet(session.sheets, selectedSheet);
       setCourses(parsed);
-      setActiveCourseIndex(0);
+      setActivePageNumber(1);
       setParseError(null);
     } catch (err) {
       setCourses([]);
       setPdfBytes(null);
+      setPdfPlan(null);
       revokePdfUrl();
       setFitError(null);
       setParseError(
@@ -123,10 +157,11 @@ export function App() {
     }
   }, [session, selectedSheet, revokePdfUrl]);
 
-  // Generate actual A4 PDF bytes whenever validated courses, confirmed currency, or logo change
+  // Generate actual personalized A4 PDF bytes (Courses + Guide + Interactive Checklist)
   useEffect(() => {
-    if (courses.length === 0 || !selectedCurrency) {
+    if (courses.length === 0 || !selectedCurrency || !trimmedStudentName) {
       setPdfBytes(null);
+      setPdfPlan(null);
       revokePdfUrl();
       setFitError(null);
       setIsGeneratingPdf(false);
@@ -140,12 +175,15 @@ export function App() {
     generateCourseShortlistPdf({
       courses,
       currency: selectedCurrency,
-      logo,
+      studentName,
+      checklistSelections,
+      logo: customLogo,
     })
       .then((result) => {
         if (cancelled) return;
         if (!result.ok) {
           setPdfBytes(null);
+          setPdfPlan(null);
           revokePdfUrl();
           setFitError(result.message);
           setIsGeneratingPdf(false);
@@ -160,6 +198,15 @@ export function App() {
         pdfObjectUrlRef.current = nextUrl;
 
         setPdfBytes(result.pdfBytes);
+        setPdfPlan({
+          pageCount: result.pageCount,
+          coursePageCount: result.coursePageCount,
+          guideStartPage: result.guideStartPage,
+          checklistStartPage: result.checklistStartPage,
+        });
+        setActivePageNumber((prev) =>
+          Math.min(Math.max(1, prev), result.pageCount),
+        );
         setPdfObjectUrl(nextUrl);
         setFitError(null);
         setIsGeneratingPdf(false);
@@ -167,6 +214,7 @@ export function App() {
       .catch(() => {
         if (cancelled) return;
         setPdfBytes(null);
+        setPdfPlan(null);
         revokePdfUrl();
         setFitError(
           'PDF generation failed unexpectedly. Please check the workbook values and try again.',
@@ -177,13 +225,22 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [courses, selectedCurrency, logo, revokePdfUrl]);
+  }, [
+    courses,
+    selectedCurrency,
+    studentName,
+    trimmedStudentName,
+    checklistSelections,
+    customLogo,
+    revokePdfUrl,
+  ]);
 
   const handleExcelFile = async (file: File) => {
     setIsParsing(true);
     setParseError(null);
     setFitError(null);
     setPdfBytes(null);
+    setPdfPlan(null);
     revokePdfUrl();
 
     try {
@@ -211,7 +268,6 @@ export function App() {
     if (file) {
       void handleExcelFile(file);
     }
-    // Reset input value so selecting the same file again triggers onChange
     event.target.value = '';
   };
 
@@ -264,7 +320,7 @@ export function App() {
       const nextLogo = await loadLogoInMemory(file);
       revokeLogoUrl();
       logoObjectUrlRef.current = nextLogo.previewUrl;
-      setLogo(nextLogo);
+      setCustomLogo(nextLogo);
     } catch (err) {
       setLogoError(
         err instanceof Error ? err.message : 'Unable to load logo image.',
@@ -272,28 +328,39 @@ export function App() {
     }
   };
 
-  const handleRemoveLogo = () => {
+  const handleRestoreDefaultLogo = () => {
     revokeLogoUrl();
-    setLogo(null);
+    setCustomLogo(null);
     setLogoError(null);
     if (logoInputRef.current) {
       logoInputRef.current.value = '';
     }
   };
 
+  const handleToggleChecklistItem = (fieldName: string) => {
+    setChecklistSelections((prev) => ({
+      ...prev,
+      [fieldName]: !prev[fieldName],
+    }));
+  };
+
   const handleReset = () => {
     revokePdfUrl();
     revokeLogoUrl();
+    setStudentName('');
+    setStudentNameTouched(false);
     setSession(null);
     setSelectedSheet('');
     setSelectedCurrency('');
     setCourses([]);
-    setActiveCourseIndex(0);
-    setLogo(null);
+    setActivePageNumber(1);
+    setChecklistSelections({});
+    setCustomLogo(null);
     setParseError(null);
     setFitError(null);
     setLogoError(null);
     setPdfBytes(null);
+    setPdfPlan(null);
     setIsParsing(false);
     setIsGeneratingPdf(false);
     setIsDragOver(false);
@@ -309,20 +376,25 @@ export function App() {
     if (!pdfObjectUrl || !canDownload) return;
     const anchor = document.createElement('a');
     anchor.href = pdfObjectUrl;
-    anchor.download = buildShortlistFilename();
+    anchor.download = buildShortlistFilename(studentName);
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
   };
 
+  const studentNameRequiredWarning = Boolean(
+    !trimmedStudentName && (studentNameTouched || session),
+  );
   const currencyRequired = Boolean(
     session && courses.length > 0 && !selectedCurrency,
   );
   const canDownload = Boolean(
-    session &&
+    trimmedStudentName &&
+      session &&
       courses.length > 0 &&
       selectedCurrency &&
       pdfBytes &&
+      pdfPlan &&
       pdfObjectUrl &&
       !parseError &&
       !fitError &&
@@ -331,20 +403,42 @@ export function App() {
   );
 
   const hasWorkingState = Boolean(
-    session || logo || parseError || fitError || logoError,
+    studentName ||
+      session ||
+      customLogo ||
+      checkedCount > 0 ||
+      parseError ||
+      fitError ||
+      logoError,
   );
-  const activeCourse = courses[activeCourseIndex] ?? null;
+
+  const headerLogoSrc = customLogo?.previewUrl ?? BRAND_CONFIG.logoAssetPath;
+  const totalPreviewPages = pdfPlan?.pageCount ?? courses.length;
+
+  const currentSectionTitle = useMemo(() => {
+    if (!pdfPlan) {
+      const course = courses[activePageNumber - 1];
+      return course?.programName ?? 'PDF Preview';
+    }
+    if (activePageNumber <= pdfPlan.coursePageCount) {
+      return courses[activePageNumber - 1]?.programName ?? 'Course Shortlist';
+    }
+    if (activePageNumber < pdfPlan.checklistStartPage) {
+      return 'UK Application Process';
+    }
+    return 'Required Documents Checklist';
+  }, [pdfPlan, activePageNumber, courses]);
 
   return (
     <div className="app-shell">
       <header className="site-header">
         <div className="header-inner">
           <div className="brand-lockup">
-            {logo ? (
+            {headerLogoSrc ? (
               <img
-                src={logo.previewUrl}
+                src={headerLogoSrc}
                 alt={`${BRAND_CONFIG.brandName} logo`}
-                className="brand-logo-thumb"
+                className="brand-logo-img"
               />
             ) : (
               <div className="brand-wordmark" aria-label={BRAND_CONFIG.brandName}>
@@ -353,9 +447,9 @@ export function App() {
               </div>
             )}
             <div className="brand-meta">
-              <h1 className="app-title">Course Shortlist PDF Generator</h1>
+              <h1 className="app-title">Course Shortlist &amp; UK Guide PDF</h1>
               <p className="app-subtitle">
-                Private in-browser Excel to A4 single-course-per-page PDF
+                Private in-browser Excel to personalized A4 PDF
               </p>
             </div>
           </div>
@@ -363,7 +457,7 @@ export function App() {
           <div className="header-actions">
             <button
               type="button"
-              className="btn btn-secondary-light"
+              className="btn btn-outline"
               onClick={handleReset}
               disabled={!hasWorkingState && !isParsing && !isGeneratingPdf}
             >
@@ -384,7 +478,35 @@ export function App() {
       </header>
 
       <main className="main-content">
-        <section className="panel" aria-label="Workbook upload and export settings">
+        <section className="panel" aria-label="Student personalisation and workbook upload">
+          <div className="student-bar">
+            <div className="student-field-wrap">
+              <label htmlFor={studentNameId} className="field-label">
+                Student Name <span className="required-star" aria-hidden="true">*</span>
+              </label>
+              <input
+                id={studentNameId}
+                name="studentName"
+                type="text"
+                required
+                placeholder="Enter student's full name (e.g. Aarav Sharma)"
+                className={`text-input ${
+                  studentNameRequiredWarning ? 'text-input-attention' : ''
+                }`}
+                value={studentName}
+                aria-describedby={studentNameHintId}
+                aria-invalid={studentNameRequiredWarning ? 'true' : undefined}
+                onChange={(e) => setStudentName(e.target.value)}
+                onBlur={() => setStudentNameTouched(true)}
+              />
+              <p id={studentNameHintId} className="field-hint">
+                Used in every PDF header (“Prepared for {trimmedStudentName || 'Student Name'}”),
+                the UK guide &amp; checklist, and filename{' '}
+                <code>{buildShortlistFilename(studentName)}</code>.
+              </p>
+            </div>
+          </div>
+
           <div className="intake-grid">
             <div
               className={`dropzone ${isDragOver ? 'dropzone-active' : ''} ${
@@ -403,8 +525,8 @@ export function App() {
                     Upload Course Excel Workbook (.xlsx)
                   </h2>
                   <p className="dropzone-sub">
-                    Drag and drop your workbook here or select a file. Data stays
-                    strictly in browser memory.
+                    Drag and drop your workbook here or select a file. All data
+                    remains strictly in browser memory.
                   </p>
                 </div>
                 <div>
@@ -431,12 +553,12 @@ export function App() {
                   <span className="file-name-text" title={session.fileName}>
                     {session.fileName}
                   </span>
-                  <span className="badge badge-navy">
+                  <span className="badge badge-neutral">
                     {session.sheetNames.length}{' '}
                     {session.sheetNames.length === 1 ? 'sheet' : 'sheets'}
                   </span>
                   {session.autoSelectedCourseData && (
-                    <span className="badge badge-success">
+                    <span className="badge badge-green">
                       Auto-selected “Course Data”
                     </span>
                   )}
@@ -461,7 +583,7 @@ export function App() {
                     Worksheet Source
                   </label>
                   {session?.autoSelectedCourseData && (
-                    <span className="badge badge-navy">Authoritative sheet</span>
+                    <span className="badge badge-green">Authoritative sheet</span>
                   )}
                 </div>
                 <select
@@ -493,7 +615,7 @@ export function App() {
                     Tuition Fee Currency
                   </label>
                   {session && selectedCurrency && (
-                    <span className="badge badge-success">
+                    <span className="badge badge-green">
                       {session.detectedCurrency === selectedCurrency &&
                       session.currencySource
                         ? 'Confirmed from workbook'
@@ -535,7 +657,7 @@ export function App() {
               <div className="field-group">
                 <div className="field-label-row">
                   <span className="field-label">
-                    Optional Header Logo (In-Memory)
+                    Eccho Overseas Brand Logo (In-Memory)
                   </span>
                 </div>
                 <div className="logo-control-row">
@@ -549,21 +671,20 @@ export function App() {
                   />
                   <label htmlFor={logoInputId} className="btn btn-outline btn-sm">
                     <ImagePlus size={15} aria-hidden="true" />
-                    {logo ? 'Change Logo' : 'Upload Logo'}
+                    {customLogo ? 'Change Custom Logo' : 'Override Logo'}
                   </label>
-                  {logo && (
+                  {customLogo ? (
                     <button
                       type="button"
                       className="btn btn-outline btn-sm"
-                      onClick={handleRemoveLogo}
+                      onClick={handleRestoreDefaultLogo}
                     >
                       <Trash2 size={15} aria-hidden="true" />
-                      Remove ({logo.fileName})
+                      Restore Default ({customLogo.fileName})
                     </button>
-                  )}
-                  {!logo && (
+                  ) : (
                     <span className="field-hint">
-                      Defaults to “ECCHO OVERSEAS” text wordmark.
+                      Using official Eccho Overseas green logo.
                     </span>
                   )}
                 </div>
@@ -571,6 +692,94 @@ export function App() {
             </div>
           </div>
         </section>
+
+        <details className="checklist-details">
+          <summary className="checklist-summary">
+            <span className="checklist-summary-title">
+              <ChevronRight
+                size={18}
+                className="checklist-chevron"
+                aria-hidden="true"
+              />
+              Pre-Export Required Documents Checklist ({checkedCount} of{' '}
+              {TOTAL_CHECKLIST_ITEMS} ticked)
+            </span>
+            <span className="badge badge-green">
+              Carried into interactive PDF checkboxes
+            </span>
+          </summary>
+
+          <div className="checklist-body">
+            <div className="checklist-top-bar">
+              <p className="checklist-instruction">
+                {CHECKLIST_READER_INSTRUCTION} Any items ticked below are
+                pre-checked in the generated PDF; no sensitive document numbers or
+                files are collected. (Guidance checked on {GUIDANCE_CHECKED_DATE})
+              </p>
+              {checkedCount > 0 && (
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={() => setChecklistSelections({})}
+                >
+                  Clear Checklist Selections
+                </button>
+              )}
+            </div>
+
+            <div className="checklist-groups-grid">
+              {DOCUMENT_CHECKLIST_GROUPS.map((group) => (
+                <section
+                  key={group.id}
+                  className="checklist-group-card"
+                  aria-label={group.title}
+                >
+                  <h3 className="checklist-group-title">{group.title}</h3>
+                  <p className="checklist-group-note">{group.circumstanceNote}</p>
+                  <ul className="checklist-items-list">
+                    {group.items.map((item) => {
+                      const isChecked = Boolean(
+                        checklistSelections[item.fieldName],
+                      );
+                      const isGeneral = item.status === 'Generally required';
+                      return (
+                        <li key={item.fieldName}>
+                          <label className="checklist-item-label">
+                            <input
+                              type="checkbox"
+                              className="checklist-item-checkbox"
+                              checked={isChecked}
+                              onChange={() =>
+                                handleToggleChecklistItem(item.fieldName)
+                              }
+                            />
+                            <span className="checklist-item-text">
+                              <span className="checklist-item-header">
+                                <span className="checklist-item-name">
+                                  {item.label}
+                                </span>
+                                <span
+                                  className={`badge ${
+                                    isGeneral ? 'badge-green' : 'badge-neutral'
+                                  }`}
+                                >
+                                  {item.status}
+                                </span>
+                              </span>
+                              <span className="checklist-item-note">
+                                {item.note}
+                              </span>
+                            </span>
+                          </label>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              ))}
+            </div>
+          </div>
+        </details>
 
         {logoError && (
           <div role="alert" className="alert-banner alert-error">
@@ -588,6 +797,19 @@ export function App() {
             <div className="alert-content">
               <p className="alert-title">Workbook validation failed</p>
               <p className="alert-detail">{parseError}</p>
+            </div>
+          </div>
+        )}
+
+        {studentNameRequiredWarning && !parseError && (
+          <div role="status" aria-live="polite" className="alert-banner alert-warn">
+            <AlertCircle size={18} aria-hidden="true" />
+            <div className="alert-content">
+              <p className="alert-title">Student Name required</p>
+              <p className="alert-detail">
+                Enter the Student Name above to personalize the PDF headers, UK
+                application guide, interactive checklist, and download filename.
+              </p>
             </div>
           </div>
         )}
@@ -621,23 +843,30 @@ export function App() {
           <div className="status-strip" role="status" aria-live="polite">
             <div className="status-metrics">
               <span className="metric-item">
-                <CheckCircle2 size={16} color="#065f46" aria-hidden="true" />
+                <CheckCircle2 size={16} color="#3d8a3a" aria-hidden="true" />
                 <span>
                   Imported courses:{' '}
                   <strong className="metric-value">{courses.length}</strong>
                 </span>
               </span>
               <span className="metric-item">
-                Layout:{' '}
+                PDF Structure:{' '}
                 <strong className="metric-value">
-                  A4 Portrait · {courses.length}{' '}
-                  {courses.length === 1 ? 'page' : 'pages'} (1 course/page)
+                  {pdfPlan
+                    ? `${pdfPlan.coursePageCount} course pages + UK Guide & Checklist (${pdfPlan.pageCount} pages total)`
+                    : `${courses.length} courses (1 course/page) + UK Guide & Checklist`}
                 </strong>
               </span>
               {selectedCurrency && (
                 <span className="metric-item">
                   Currency:{' '}
                   <strong className="metric-value">{selectedCurrency}</strong>
+                </span>
+              )}
+              {trimmedStudentName && (
+                <span className="metric-item">
+                  Student:{' '}
+                  <strong className="metric-value">{trimmedStudentName}</strong>
                 </span>
               )}
             </div>
@@ -656,16 +885,17 @@ export function App() {
 
         {courses.length > 0 && !parseError ? (
           <div className="workspace-grid">
-            <aside className="course-sidebar" aria-label="Imported courses">
+            <aside className="course-sidebar" aria-label="PDF document navigation">
               <div className="sidebar-header">
                 <h2 className="sidebar-title">
                   Courses ({courses.length})
                 </h2>
-                <span className="badge badge-navy">Source Order</span>
+                <span className="badge badge-green">Source Order</span>
               </div>
               <ol className="course-list">
                 {courses.map((course, idx) => {
-                  const isActive = idx === activeCourseIndex;
+                  const targetPage = idx + 1;
+                  const isActive = activePageNumber === targetPage;
                   const feeLabel = selectedCurrency
                     ? formatTuitionFee(course.yearlyTuitionFee, selectedCurrency)
                     : 'Select currency';
@@ -677,9 +907,9 @@ export function App() {
                           isActive ? 'course-nav-item-active' : ''
                         }`}
                         aria-current={isActive ? 'page' : undefined}
-                        onClick={() => setActiveCourseIndex(idx)}
+                        onClick={() => setActivePageNumber(targetPage)}
                       >
-                        <span className="course-index-pill">{idx + 1}</span>
+                        <span className="course-index-pill">{targetPage}</span>
                         <span className="course-nav-copy">
                           <span className="course-nav-program">
                             {course.programName}
@@ -694,17 +924,77 @@ export function App() {
                   );
                 })}
               </ol>
+
+              {pdfPlan && (
+                <>
+                  <div className="sidebar-section-divider">
+                    Guidance &amp; Checklist
+                  </div>
+                  <ul className="guide-nav-list">
+                    <li>
+                      <button
+                        type="button"
+                        className={`course-nav-item ${
+                          activePageNumber >= pdfPlan.guideStartPage &&
+                          activePageNumber < pdfPlan.checklistStartPage
+                            ? 'course-nav-item-active'
+                            : ''
+                        }`}
+                        onClick={() =>
+                          setActivePageNumber(pdfPlan.guideStartPage)
+                        }
+                      >
+                        <span className="course-index-pill" aria-hidden="true">
+                          <BookOpenCheck size={13} />
+                        </span>
+                        <span className="course-nav-copy">
+                          <span className="course-nav-program">
+                            UK Application Process
+                          </span>
+                          <span className="course-nav-uni">
+                            Page {pdfPlan.guideStartPage} · Admissions vs UKVI
+                          </span>
+                        </span>
+                      </button>
+                    </li>
+                    <li>
+                      <button
+                        type="button"
+                        className={`course-nav-item ${
+                          activePageNumber >= pdfPlan.checklistStartPage
+                            ? 'course-nav-item-active'
+                            : ''
+                        }`}
+                        onClick={() =>
+                          setActivePageNumber(pdfPlan.checklistStartPage)
+                        }
+                      >
+                        <span className="course-index-pill" aria-hidden="true">
+                          <CheckSquare size={13} />
+                        </span>
+                        <span className="course-nav-copy">
+                          <span className="course-nav-program">
+                            Required Documents Checklist
+                          </span>
+                          <span className="course-nav-uni">
+                            Page {pdfPlan.checklistStartPage} · Interactive PDF
+                            boxes
+                          </span>
+                        </span>
+                      </button>
+                    </li>
+                  </ul>
+                </>
+              )}
             </aside>
 
             <section className="preview-panel" aria-label="PDF page preview">
               <div className="preview-toolbar">
                 <div className="preview-heading-block">
-                  <h2 className="preview-title">
-                    {activeCourse?.programName ?? 'PDF Preview'}
-                  </h2>
+                  <h2 className="preview-title">{currentSectionTitle}</h2>
                   <p className="preview-caption">
-                    Rendered directly from the generated A4 PDF — identical to
-                    the downloaded file
+                    Rendered directly from the generated A4 PDF — click links on
+                    the page to jump between sections
                   </p>
                 </div>
 
@@ -713,25 +1003,25 @@ export function App() {
                     type="button"
                     className="btn btn-outline btn-sm"
                     onClick={() =>
-                      setActiveCourseIndex((prev) => Math.max(0, prev - 1))
+                      setActivePageNumber((prev) => Math.max(1, prev - 1))
                     }
-                    disabled={activeCourseIndex <= 0}
+                    disabled={activePageNumber <= 1}
                   >
                     <ChevronLeft size={16} aria-hidden="true" />
                     Previous
                   </button>
                   <span className="page-counter">
-                    Page {activeCourseIndex + 1} of {courses.length}
+                    Page {activePageNumber} of {totalPreviewPages}
                   </span>
                   <button
                     type="button"
                     className="btn btn-outline btn-sm"
                     onClick={() =>
-                      setActiveCourseIndex((prev) =>
-                        Math.min(courses.length - 1, prev + 1),
+                      setActivePageNumber((prev) =>
+                        Math.min(totalPreviewPages, prev + 1),
                       )
                     }
-                    disabled={activeCourseIndex >= courses.length - 1}
+                    disabled={activePageNumber >= totalPreviewPages}
                   >
                     Next
                     <ChevronRight size={16} aria-hidden="true" />
@@ -740,11 +1030,16 @@ export function App() {
               </div>
 
               <div className="preview-stage-wrap">
-                {pdfBytes && activeCourse ? (
+                {pdfBytes ? (
                   <PdfPreviewCanvas
                     pdfBytes={pdfBytes}
-                    pageNumber={activeCourseIndex + 1}
-                    courseTitle={activeCourse.programName}
+                    pageNumber={activePageNumber}
+                    pageTitle={currentSectionTitle}
+                    onNavigatePage={(targetPage) =>
+                      setActivePageNumber(
+                        Math.min(Math.max(1, targetPage), totalPreviewPages),
+                      )
+                    }
                   />
                 ) : isGeneratingPdf ? (
                   <div className="loading-row" role="status" aria-live="polite">
@@ -757,14 +1052,18 @@ export function App() {
                 ) : (
                   <div className="empty-state">
                     <h3 className="empty-state-title">
-                      {currencyRequired
-                        ? 'Select a currency to render the PDF preview'
-                        : 'PDF preview unavailable'}
+                      {!trimmedStudentName
+                        ? 'Enter Student Name to generate the personalized PDF'
+                        : currencyRequired
+                          ? 'Select a currency to render the PDF preview'
+                          : 'PDF preview unavailable'}
                     </h3>
                     <p className="empty-state-body">
                       {fitError
                         ? 'Resolve the single-page fit issue reported above to preview and export.'
-                        : 'Choose the confirmed tuition currency above to generate and inspect every A4 page.'}
+                        : !trimmedStudentName
+                          ? 'Fill in the required Student Name field above to personalize every page and enable PDF preview and download.'
+                          : 'Choose the confirmed tuition currency above to generate and inspect every A4 page.'}
                     </p>
                   </div>
                 )}
@@ -776,14 +1075,13 @@ export function App() {
           !parseError && (
             <section className="empty-state" aria-label="Getting started">
               <h2 className="empty-state-title">
-                Ready to convert your Eccho Overseas course shortlist
+                Ready to build a personalized Eccho Overseas shortlist PDF
               </h2>
               <p className="empty-state-body">
-                Upload an Excel workbook (.xlsx). When a “Course Data” worksheet
-                is present it is selected automatically; each row becomes one
-                branded A4 portrait page with complete entry requirements,
-                scholarships, English test scores, waiver rules, and a clickable
-                university link.
+                Enter the student’s name and upload an Excel workbook (.xlsx).
+                Each course from “Course Data” becomes one A4 portrait page,
+                followed by the clickable UK Application Process guide and
+                interactive Required Documents Checklist.
               </p>
             </section>
           )
@@ -793,8 +1091,8 @@ export function App() {
       <footer className="site-footer">
         <div className="footer-inner">
           <span>
-            {BRAND_CONFIG.brandName} · Client-side only (no files uploaded or
-            stored)
+            {BRAND_CONFIG.brandName} · Client-side only (no student data stored or
+            transmitted)
           </span>
           {contactEntries.length > 0 && (
             <span>
@@ -808,4 +1106,3 @@ export function App() {
 }
 
 export default App;
-

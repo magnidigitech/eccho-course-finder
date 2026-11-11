@@ -168,13 +168,25 @@ export function normalizeWebsiteUrl(raw: RawCell): {
 }
 
 /**
- * Builds the local-date download filename:
- * Eccho_Overseas_Course_Shortlist_YYYY-MM-DD.pdf
+ * Sanitizes a student name ONLY for safe cross-platform download filenames,
+ * preserving the original student spelling everywhere inside the app and PDF.
  */
-export function buildShortlistFilename(date: Date = new Date()): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `Eccho_Overseas_Course_Shortlist_${year}-${month}-${day}.pdf`;
+export function sanitizeFilenameSegment(rawName: string): string {
+  const cleaned = rawName
+    .trim()
+    .replace(/[/\\:*?"<>|\u0000-\u001F\u007F]+/g, '')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return cleaned || 'Student';
+}
+
+/**
+ * Builds the personalized download filename:
+ * Eccho_Overseas_[Student_Name]_Course_Shortlist.pdf
+ */
+export function buildShortlistFilename(studentName: string): string {
+  const safeStudent = sanitizeFilenameSegment(studentName);
+  return `Eccho_Overseas_${safeStudent}_Course_Shortlist.pdf`;
 }
 

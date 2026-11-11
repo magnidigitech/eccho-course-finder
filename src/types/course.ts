@@ -101,11 +101,16 @@ export interface PageFitFailure {
   availableHeightPt: number;
 }
 
+export type ChecklistSelections = Record<string, boolean>;
+
 export type PdfGenerationResult =
   | {
       ok: true;
       pdfBytes: Uint8Array;
       pageCount: number;
+      coursePageCount: number;
+      guideStartPage: number;
+      checklistStartPage: number;
       tiersUsed: string[];
     }
   | {

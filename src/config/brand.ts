@@ -1,3 +1,5 @@
+import defaultEcchoLogoUrl from '../assets/eccho-logo.png?url';
+
 export interface BrandContactConfig {
   email: string;
   phone: string;
@@ -11,11 +13,11 @@ export interface BrandConfig {
   documentTitle: string;
   logoAssetPath: string | null;
   colors: {
-    navyPrimary: string;
-    navySecondary: string;
-    orangeAccent: string;
-    orangeSoft: string;
-    orangeBorder: string;
+    brandPrimary: string;
+    brandDark: string;
+    brandHover: string;
+    brandSoft: string;
+    brandBorder: string;
     surfaceTint: string;
     surfaceAlt: string;
     border: string;
@@ -33,20 +35,20 @@ export const BRAND_CONFIG: BrandConfig = {
   brandName: 'Eccho Overseas',
   wordmark: 'ECCHO OVERSEAS',
   documentTitle: 'Course Shortlist',
-  logoAssetPath: null,
+  logoAssetPath: defaultEcchoLogoUrl,
   colors: {
-    navyPrimary: '#0F2744',
-    navySecondary: '#1B3B66',
-    orangeAccent: '#D95D18',
-    orangeSoft: '#FFF6F0',
-    orangeBorder: '#F2C7AE',
-    surfaceTint: '#F6F8FB',
-    surfaceAlt: '#EEF3F9',
-    border: '#DCE3ED',
-    borderStrong: '#C5D0DF',
-    textPrimary: '#112236',
-    textSecondary: '#3E5066',
-    textMuted: '#607287',
+    brandPrimary: '#3d8a3a',
+    brandDark: '#265c24',
+    brandHover: '#31722e',
+    brandSoft: '#eef7ee',
+    brandBorder: '#bdddbb',
+    surfaceTint: '#f6faf6',
+    surfaceAlt: '#ebf4eb',
+    border: '#d5e3d4',
+    borderStrong: '#b5cdb4',
+    textPrimary: '#142317',
+    textSecondary: '#3b513e',
+    textMuted: '#586e5b',
     white: '#FFFFFF',
   },
   contact: {
@@ -76,4 +78,3 @@ export function getNonEmptyContactEntries(
   ];
   return candidates.filter((entry) => entry.value.length > 0);
 }
-
