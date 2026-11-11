@@ -21,7 +21,7 @@ All Excel parsing, validation, PDF generation, checklist state, and live PDF pre
 - **Automatic Online University Logo Discovery (Chrome Extension)**
   - Uses each university's Website URL and University name inside the extension background worker via narrowly scoped, user-approved `optional_host_permissions` (never requesting permanent access to all sites and never transmitting student or workbook data).
   - Extracts official candidates from `CollegeOrUniversity` / `Organization` JSON-LD schemas, `<header>` / `<nav>` images, inline SVGs, and header CSS logo backgrounds; rejects favicons, social banners, spacers, and accreditation badges.
-  - Validates magic bytes and dimensions, sanitizes and rasterizes untrusted SVG without DOM injection, detects white-on-transparent logos to apply a dark charcoal frame automatically, shows a candidate picker when multiple candidates tie (`Needs selection`), and falls back cleanly to initials (`Unavailable`) + manual upload if blocked or permission is denied.
+  - Validates magic bytes and dimensions, sanitizes and rasterizes untrusted SVG without DOM injection, detects white-on-transparent logos to apply a dark charcoal frame automatically, directly selects the highest-ranked valid candidate (`Found`), and falls back cleanly to initials (`Unavailable`) + manual upload if blocked or permission is denied.
   - Embeds resolved PNG/JPEG bytes directly inside the PDF for completely offline viewing.
 - **Clickable PDF Navigation & Interactive Checkboxes**
   - Summary rows jump directly to each course page via internal PDF `/GoTo` annotations; course, guide, and checklist pages link cleanly back to the summary and each other.

@@ -256,6 +256,12 @@ export async function discoverSingleUniversityEntry(
 
   if (outcome.status === 'found' && outcome.selected) {
     const selected = outcome.selected;
+    // Revoke unused runner-up preview blobs immediately
+    for (const c of outcome.candidates) {
+      if (c.logo.previewUrl !== selected.logo.previewUrl && c.logo.previewUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(c.logo.previewUrl);
+      }
+    }
     const isDarkBackdrop = Boolean(selected.logo.needsDarkBackdrop);
     return {
       ...entry,
@@ -264,24 +270,11 @@ export async function discoverSingleUniversityEntry(
       source: 'discovered',
       logo: selected.logo,
       logoSourceUrl: selected.sourceUrl,
-      candidates: outcome.candidates,
+      candidates: [],
       pendingExternalHosts,
       statusMessage: isDarkBackdrop
         ? `${selected.sourceLabel} (light logo placed on dark frame for contrast)`
         : selected.sourceLabel,
-    };
-  }
-
-  if (outcome.status === 'needs_selection') {
-    return {
-      ...entry,
-      finalWebsiteUrl: response.finalWebsiteUrl ?? entry.finalWebsiteUrl,
-      status: 'needs_selection',
-      source: 'initials',
-      logo: null,
-      candidates: outcome.candidates,
-      pendingExternalHosts,
-      statusMessage: `Found ${outcome.candidates.length} plausible logo candidates — choose one to confirm.`,
     };
   }
 
@@ -337,12 +330,7 @@ export async function fetchPendingExternalHostCandidate(
       pendingExternalHosts: (entry.pendingExternalHosts ?? []).filter(
         (h) => h.candidateUrl !== pending.candidateUrl,
       ),
-      status:
-        (entry.candidates?.length ?? 0) > 0
-          ? entry.status === 'found'
-            ? 'found'
-            : 'needs_selection'
-          : 'unavailable',
+      status: entry.logo ? 'found' : 'unavailable',
       statusMessage: res?.reason ?? `Could not download logo from ${pending.origin}.`,
     };
   }
@@ -363,12 +351,11 @@ export async function fetchPendingExternalHostCandidate(
       pendingExternalHosts: (entry.pendingExternalHosts ?? []).filter(
         (h) => h.candidateUrl !== pending.candidateUrl,
       ),
-      status: (entry.candidates?.length ?? 0) > 0 ? 'needs_selection' : 'unavailable',
+      status: entry.logo ? 'found' : 'unavailable',
       statusMessage: `Downloaded file from ${pending.origin} was not a valid usable logo image.`,
     };
   }
 
-  const nextCandidates = [...(entry.candidates ?? []), processed];
   const remainingExternal = (entry.pendingExternalHosts ?? []).filter(
     (h) => h.candidateUrl !== pending.candidateUrl,
   );
@@ -379,29 +366,11 @@ export async function fetchPendingExternalHostCandidate(
     source: 'discovered',
     logo: processed.logo,
     logoSourceUrl: processed.sourceUrl,
-    candidates: nextCandidates,
+    candidates: [],
     pendingExternalHosts: remainingExternal,
     statusMessage: processed.logo.needsDarkBackdrop
       ? `${processed.sourceLabel} (light logo on dark frame)`
       : processed.sourceLabel,
-  };
-}
-
-export function applyCandidateSelection(
-  entry: UniversityLogoEntry,
-  candidateId: string,
-): UniversityLogoEntry {
-  const chosen = entry.candidates?.find((c) => c.id === candidateId);
-  if (!chosen) return entry;
-  return {
-    ...entry,
-    status: 'found',
-    source: 'discovered',
-    logo: chosen.logo,
-    logoSourceUrl: chosen.sourceUrl,
-    statusMessage: chosen.logo.needsDarkBackdrop
-      ? `${chosen.sourceLabel} (light logo on dark frame)`
-      : chosen.sourceLabel,
   };
 }
 

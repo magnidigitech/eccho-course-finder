@@ -69,7 +69,6 @@ import { loadLogoInMemory, revokeLogoPreviewUrl } from './utils/logoLoader';
 import { inspectProcessedLogoPixels } from './utils/logoProcessor';
 import { generateCourseShortlistPdf } from './utils/pdfGenerator';
 import {
-  applyCandidateSelection,
   collectPendingHostOrigins,
   discoverSingleUniversityEntry,
   fetchPendingExternalHostCandidate,
@@ -129,45 +128,6 @@ function UniversityLogoBox({
           {initials}
         </span>
       )}
-    </div>
-  );
-}
-
-function CandidatePickerGrid({
-  entry,
-  universityName,
-  ariaLabel,
-  onSelect,
-}: {
-  entry: UniversityLogoEntry;
-  universityName: string;
-  ariaLabel: string;
-  onSelect: (candidateId: string) => void;
-}) {
-  if (!entry.candidates || entry.candidates.length === 0) return null;
-  return (
-    <div className="candidate-picker-grid" role="group" aria-label={ariaLabel}>
-      {entry.candidates.map((cand) => (
-        <button
-          key={cand.id}
-          type="button"
-          className={`candidate-option-btn${
-            entry.logo?.previewUrl === cand.logo.previewUrl ? ' is-selected' : ''
-          }`}
-          onClick={() => onSelect(cand.id)}
-        >
-          <UniversityLogoBox
-            universityName={universityName}
-            overrideLogo={cand.logo}
-          />
-          <span className="candidate-option-meta">
-            {cand.sourceLabel}
-            {cand.logo.pixelWidth && cand.logo.pixelHeight
-              ? ` (${cand.logo.pixelWidth}×${cand.logo.pixelHeight})`
-              : ''}
-          </span>
-        </button>
-      ))}
     </div>
   );
 }
@@ -781,17 +741,6 @@ export function App() {
     });
   };
 
-  const handleSelectCandidate = (universityKey: string, candidateId: string) => {
-    setUniversityLogos((prev) => {
-      const current = prev[universityKey];
-      if (!current) return prev;
-      return {
-        ...prev,
-        [universityKey]: applyCandidateSelection(current, candidateId),
-      };
-    });
-  };
-
   const handleDownloadPdf = async () => {
     if (!trimmedStudentName) {
       setErrorMessage('Enter Student Name before downloading the PDF.');
@@ -1366,11 +1315,9 @@ export function App() {
                             ? entry?.source === 'uploaded'
                               ? 'Found (Custom upload)'
                               : 'Found'
-                            : status === 'needs_selection'
-                              ? 'Needs selection'
-                              : status === 'permission_required'
-                                ? 'Needs permission'
-                                : 'Unavailable';
+                            : status === 'permission_required'
+                              ? 'Needs permission'
+                              : 'Unavailable';
 
                       return (
                         <div
@@ -1390,8 +1337,7 @@ export function App() {
                                 className={`logo-status-pill${
                                   status === 'found'
                                     ? ' is-found'
-                                    : status === 'needs_selection' ||
-                                        status === 'permission_required'
+                                    : status === 'permission_required'
                                       ? ' is-selection'
                                       : ''
                                 }`}
@@ -1431,45 +1377,6 @@ export function App() {
                               void handleUniversityLogoUpload(course, e)
                             }
                           />
-
-                          {entry &&
-                            entry.candidates &&
-                            entry.candidates.length > 0 &&
-                            status === 'needs_selection' && (
-                              <CandidatePickerGrid
-                                entry={entry}
-                                universityName={course.university}
-                                ariaLabel={`Logo candidates for ${course.university}`}
-                                onSelect={(candId) =>
-                                  handleSelectCandidate(
-                                    course.universityKey,
-                                    candId,
-                                  )
-                                }
-                              />
-                            )}
-
-                          {entry &&
-                            entry.candidates &&
-                            entry.candidates.length > 1 &&
-                            status === 'found' && (
-                              <details className="secondary-details">
-                                <summary>
-                                  Switch candidate ({entry.candidates.length})
-                                </summary>
-                                <CandidatePickerGrid
-                                  entry={entry}
-                                  universityName={course.university}
-                                  ariaLabel={`Alternative logo candidates for ${course.university}`}
-                                  onSelect={(candId) =>
-                                    handleSelectCandidate(
-                                      course.universityKey,
-                                      candId,
-                                    )
-                                  }
-                                />
-                              </details>
-                            )}
 
                           {inExtensionTab &&
                             entry?.pendingExternalHosts &&

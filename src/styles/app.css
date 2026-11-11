@@ -686,39 +686,6 @@ summary:focus-visible {
   word-break: break-word;
 }
 
-.candidate-picker-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.45rem;
-}
-
-.candidate-option-btn {
-  display: grid;
-  justify-items: center;
-  gap: 0.3rem;
-  padding: 0.45rem;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background-color: var(--bg-surface);
-  cursor: pointer;
-  text-align: center;
-}
-
-.candidate-option-btn:hover {
-  border-color: var(--brand-green);
-  background-color: var(--brand-green-soft);
-}
-
-.candidate-option-btn.is-selected {
-  border-color: var(--brand-green);
-  background-color: var(--brand-green-soft);
-}
-
-.candidate-option-meta {
-  font-size: 0.68rem;
-  color: var(--text-muted);
-}
-
 .logo-manager-actions {
   display: flex;
   flex-wrap: wrap;

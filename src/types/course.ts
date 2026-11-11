@@ -102,7 +102,6 @@ export type LogoDiscoveryStatus =
   | 'permission_required'
   | 'finding'
   | 'found'
-  | 'needs_selection'
   | 'unavailable';
 
 export type CandidateSourceKind =

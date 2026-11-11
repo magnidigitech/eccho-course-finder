@@ -189,34 +189,53 @@ describe('Image magic-byte verification & candidate ambiguity resolution', () =>
     ).toBe('svg');
   });
 
-  it('triggers needs_selection when close candidates tie and selects clearly when one dominates', () => {
-    const mkCandidate = (id: string, score: number): DiscoveredLogoCandidate => ({
+  it('directly auto-picks the best candidate using score, light/dark contrast, PNG over JPEG, and resolution', () => {
+    const mkCandidate = (
+      id: string,
+      score: number,
+      opts: {
+        mimeType?: 'image/png' | 'image/jpeg';
+        needsDarkBackdrop?: boolean;
+        pixelWidth?: number;
+        pixelHeight?: number;
+      } = {},
+    ): DiscoveredLogoCandidate => ({
       id,
-      sourceUrl: `https://uni.ac.uk/${id}.png`,
+      sourceUrl: `https://uni.ac.uk/${id}.${opts.mimeType === 'image/jpeg' ? 'jpg' : 'png'}`,
       sourceKind: 'header_img',
       sourceLabel: 'Header image',
       score,
       logo: {
         fileName: `${id}.png`,
-        mimeType: 'image/png',
+        mimeType: opts.mimeType ?? 'image/png',
         bytes: new Uint8Array([1, 2, 3]),
         previewUrl: `blob:${id}`,
+        needsDarkBackdrop: opts.needsDarkBackdrop ?? false,
+        pixelWidth: opts.pixelWidth ?? 200,
+        pixelHeight: opts.pixelHeight ?? 80,
       },
     });
 
-    const ambiguous = resolveCandidateOutcome([
-      mkCandidate('a', 96),
-      mkCandidate('b', 90),
+    const pngVsJpgTie = resolveCandidateOutcome([
+      mkCandidate('jpg_ver', 96, { mimeType: 'image/jpeg', pixelWidth: 580, pixelHeight: 182 }),
+      mkCandidate('png_ver', 96, { mimeType: 'image/png', pixelWidth: 240, pixelHeight: 73 }),
     ]);
-    expect(ambiguous.status).toBe('needs_selection');
-    expect(ambiguous.selected).toBeNull();
+    expect(pngVsJpgTie.status).toBe('found');
+    expect(pngVsJpgTie.selected?.id).toBe('png_ver');
 
-    const clearWinner = resolveCandidateOutcome([
+    const contrastTie = resolveCandidateOutcome([
+      mkCandidate('white_ver', 96, { needsDarkBackdrop: true }),
+      mkCandidate('dark_ver', 96, { needsDarkBackdrop: false }),
+    ]);
+    expect(contrastTie.status).toBe('found');
+    expect(contrastTie.selected?.id).toBe('dark_ver');
+
+    const scoreWinner = resolveCandidateOutcome([
       mkCandidate('primary', 108),
       mkCandidate('fallback', 80),
     ]);
-    expect(clearWinner.status).toBe('found');
-    expect(clearWinner.selected?.id).toBe('primary');
+    expect(scoreWinner.status).toBe('found');
+    expect(scoreWinner.selected?.id).toBe('primary');
   });
 });
 

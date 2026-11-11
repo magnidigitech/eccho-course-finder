@@ -29,6 +29,7 @@ export interface PixelAnalysisResult {
   height: number;
   hasVisiblePixels: boolean;
   needsDarkBackdrop: boolean;
+  inkCoverageRatio: number;
 }
 
 /**
@@ -123,6 +124,7 @@ export function inspectProcessedLogoPixels(
             height: naturalH,
             hasVisiblePixels: naturalW >= 24 && naturalH >= 16,
             needsDarkBackdrop: false,
+            inkCoverageRatio: 0.5,
           });
           return;
         }
@@ -143,22 +145,38 @@ export function inspectProcessedLogoPixels(
         let transparentCount = 0;
         let brightOpaqueCount = 0;
         let darkOpaqueCount = 0;
+        let minX = drawW;
+        let minY = drawH;
+        let maxX = -1;
+        let maxY = -1;
 
-        for (let i = 0; i < data.length; i += 4) {
-          const r = data[i];
-          const g = data[i + 1];
-          const b = data[i + 2];
-          const a = data[i + 3];
-          if (a < 25) {
-            transparentCount += 1;
-            continue;
-          }
-          opaqueCount += 1;
-          const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-          if (lum >= 0.84) {
-            brightOpaqueCount += 1;
-          } else if (lum < 0.7) {
-            darkOpaqueCount += 1;
+        for (let y = 0; y < drawH; y += 1) {
+          for (let x = 0; x < drawW; x += 1) {
+            const i = (y * drawW + x) * 4;
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            const a = data[i + 3];
+            if (a < 25) {
+              transparentCount += 1;
+              continue;
+            }
+            opaqueCount += 1;
+            const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+            if (lum >= 0.84) {
+              brightOpaqueCount += 1;
+            } else if (lum < 0.7) {
+              darkOpaqueCount += 1;
+            }
+            if (lum < 0.94 || a >= 25) {
+              // Track ink bounds using non-white ink when transparent/light paper exists
+              if (lum < 0.94 || transparentCount > 0) {
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+              }
+            }
           }
         }
 
@@ -166,12 +184,17 @@ export function inspectProcessedLogoPixels(
         const hasTransparentBg = totalPixels > 0 && transparentCount / totalPixels >= 0.08;
         const brightFraction = opaqueCount > 0 ? brightOpaqueCount / opaqueCount : 0;
         const darkFraction = opaqueCount > 0 ? darkOpaqueCount / opaqueCount : 0;
+        const inkCoverageRatio =
+          maxX >= minX && maxY >= minY
+            ? ((maxX - minX + 1) * (maxY - minY + 1)) / Math.max(1, drawW * drawH)
+            : 0.5;
 
         resolve({
           width: naturalW,
           height: naturalH,
           hasVisiblePixels: opaqueCount >= 12,
           needsDarkBackdrop: hasTransparentBg && brightFraction >= 0.86 && darkFraction < 0.08,
+          inkCoverageRatio,
         });
       } catch (err) {
         reject(err instanceof Error ? err : new Error('Pixel inspection failed'));
@@ -259,6 +282,16 @@ export async function processDiscoveredCandidate(
       adjustedScore -= 14;
     }
 
+    if (metrics.inkCoverageRatio >= 0.45) {
+      adjustedScore += 8;
+    } else if (metrics.inkCoverageRatio < 0.25) {
+      adjustedScore -= 8;
+    }
+
+    if (finalMime === 'image/png') {
+      adjustedScore += 4;
+    }
+
     if (needsDark) {
       adjustedScore -= 18;
     } else {
@@ -289,10 +322,14 @@ export async function processDiscoveredCandidate(
   }
 }
 
+/**
+ * Directly selects the highest-ranked valid logo candidate using deterministic
+ * tie-breakers: score -> contrast on white -> PNG over JPEG -> resolution.
+ */
 export function resolveCandidateOutcome(
   validCandidates: DiscoveredLogoCandidate[],
 ): {
-  status: 'found' | 'needs_selection' | 'unavailable';
+  status: 'found' | 'unavailable';
   selected: DiscoveredLogoCandidate | null;
   candidates: DiscoveredLogoCandidate[];
 } {
@@ -300,20 +337,18 @@ export function resolveCandidateOutcome(
     return { status: 'unavailable', selected: null, candidates: [] };
   }
 
-  const sorted = [...validCandidates].sort((a, b) => b.score - a.score);
-  if (sorted.length === 1) {
-    return { status: 'found', selected: sorted[0], candidates: sorted };
-  }
+  const sorted = [...validCandidates].sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    const aDark = a.logo.needsDarkBackdrop ? 1 : 0;
+    const bDark = b.logo.needsDarkBackdrop ? 1 : 0;
+    if (aDark !== bDark) return aDark - bDark;
+    const aPng = a.logo.mimeType === 'image/png' ? 1 : 0;
+    const bPng = b.logo.mimeType === 'image/png' ? 1 : 0;
+    if (bPng !== aPng) return bPng - aPng;
+    const areaA = (a.logo.pixelWidth ?? 0) * (a.logo.pixelHeight ?? 0);
+    const areaB = (b.logo.pixelWidth ?? 0) * (b.logo.pixelHeight ?? 0);
+    return areaB - areaA;
+  });
 
-  const top = sorted[0];
-  const second = sorted[1];
-
-  // If two genuinely different candidates score closely (within 10 pts),
-  // prompt quick confirmation via candidate picker while keeping valid previews ready.
-  const closeContention = top.score - second.score <= 10;
-  if (closeContention) {
-    return { status: 'needs_selection', selected: null, candidates: sorted };
-  }
-
-  return { status: 'found', selected: top, candidates: sorted };
+  return { status: 'found', selected: sorted[0], candidates: sorted };
 }
