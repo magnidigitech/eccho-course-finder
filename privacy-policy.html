@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Privacy Policy | Eccho Overseas — Course Shortlist PDF</title>
+    <meta
+      name="description"
+      content="Privacy Policy for the Eccho Overseas Course Shortlist Converter web application and Chrome extension."
+    />
+    <link rel="stylesheet" href="/src/styles/privacy.css" />
+  </head>
+  <body>
+    <a href="#privacy-title" class="skip-link visually-hidden"
+      >Skip to main content</a
+    >
+
+    <header class="policy-header">
+      <div class="policy-header-inner">
+        <a href="/index.html" class="policy-brand">
+          <span class="policy-logo-frame">
+            <img
+              src="/src/assets/eccho-logo.png"
+              alt="Eccho Overseas"
+              width="994"
+              height="405"
+              class="policy-logo"
+              fetchpriority="high"
+            />
+          </span>
+          <span>Course Shortlist PDF</span>
+        </a>
+        <nav aria-label="Primary">
+          <a href="/index.html" class="policy-nav-link">
+            Open Course Shortlist Converter
+          </a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="policy-main">
+      <div class="policy-card">
+        <article class="policy-article">
+          <p class="policy-kicker">Eccho Overseas</p>
+          <h1 id="privacy-title" tabindex="-1">Privacy Policy</h1>
+          <p class="policy-meta">
+            Effective &amp; last updated:
+            <time datetime="2026-11-11">11 November 2026</time>
+          </p>
+
+          <div class="policy-summary-callout">
+            <p>
+              <strong>Local-first privacy summary:</strong> Eccho Overseas —
+              Course Shortlist PDF parses your Excel files, generates personalised
+              A4 PDFs, and saves interactive checklist selections strictly inside
+              your own browser. Student names, spreadsheets, and checklist answers
+              are never transmitted to Eccho Overseas or any third-party server.
+            </p>
+          </div>
+
+          <section aria-labelledby="scope-heading">
+            <h2 id="scope-heading">1. Scope of This Policy</h2>
+            <p>
+              This Privacy Policy applies to the
+              <strong>Eccho Overseas — Course Shortlist Converter</strong> web
+              application (hosted at
+              <a href="https://www.ecchooverseas.co.in/"
+                >ecchooverseas.co.in</a
+              >) and the companion Google Chrome extension
+              <strong>Eccho Overseas — Course Shortlist PDF</strong>.
+            </p>
+          </section>
+
+          <section aria-labelledby="data-heading">
+            <h2 id="data-heading">2. Data You Provide &amp; How It Is Used</h2>
+            <p>
+              To prepare your personalised UK university shortlist PDF, the tool
+              works strictly with the files and entries you provide during your
+              browser session:
+            </p>
+            <ul>
+              <li>
+                <strong>Student Name:</strong> Used locally to label the PDF
+                header (<q>Prepared for [Student Name]</q>), guidance pages,
+                document checklist, and downloaded PDF filename.
+              </li>
+              <li>
+                <strong>Excel Course Shortlist (<code>.xlsx</code> /
+                <code>.xlsm</code>):</strong> Read in browser memory to extract
+                university names, website URLs, course titles, campus locations,
+                tuition fees, scholarships, academic entry criteria, and English
+                language requirements.
+              </li>
+              <li>
+                <strong>Checklist Selections &amp; Optional Uploaded Logos:</strong>
+                Used locally to populate pre-ticked checkboxes inside your
+                downloaded PDF and optionally display your uploaded agency or
+                university logo files.
+              </li>
+            </ul>
+            <p>
+              The application does <strong>not</strong> collect, ask for, or store
+              passport numbers, bank statements, financial evidence, passwords,
+              payment cards, or personal student documents.
+            </p>
+          </section>
+
+          <section aria-labelledby="storage-heading">
+            <h2 id="storage-heading">3. Local Storage &amp; Chrome Permissions</h2>
+            <p>
+              The web application holds active session data only in memory while
+              the tab is open. Inside the Chrome extension, permissions are scoped
+              to the minimum needed for functionality:
+            </p>
+            <ul>
+              <li>
+                <strong><code>storage</code> permission (Chrome Extension):</strong>
+                Uses <code>chrome.storage.session</code> on your device solely to
+                preserve your current shortlist, student name, checklist state,
+                and loaded logos if you reload or switch back to the converter tab
+                within the same browser session. We do not use
+                <code>chrome.storage.sync</code>, so data is never synced to
+                Google servers.
+              </li>
+              <li>
+                <strong>Optional website host access
+                (<code>https://*/*</code>, <code>http://*/*</code>):</strong>
+                Requested only on demand when you import a shortlist inside the
+                extension and explicitly click
+                <strong>Grant Host Access &amp; Find Logos</strong> (or
+                <strong>Allow</strong> for an image host). Access is used strictly
+                to fetch public official university logos from their homepage
+                HTML, stylesheets, and image URLs so logos can be embedded
+                offline inside your PDF.
+              </li>
+            </ul>
+            <p>
+              Logo discovery requests use cookie-free anonymous GET requests and
+              <strong>never send student names, course details, or spreadsheet
+              contents</strong> to university websites.
+            </p>
+
+            <div class="table-scroll">
+              <table class="policy-table">
+                <caption>
+                  Summary of Data Processing &amp; Retention
+                </caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Category</th>
+                    <th scope="col">Purpose</th>
+                    <th scope="col">Shared Externally</th>
+                    <th scope="col">Retention</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <th scope="row">Student Name &amp; Excel Data</th>
+                    <td>Local PDF generation &amp; preview</td>
+                    <td>Never transmitted</td>
+                    <td>Memory / Chrome session only; cleared on Reset or tab close</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Checklist Ticks &amp; Uploaded Images</th>
+                    <td>Pre-populate interactive PDF form &amp; branding</td>
+                    <td>Never transmitted</td>
+                    <td>Memory / Chrome session only; cleared on Reset or tab close</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">University Website URLs</th>
+                    <td>Fetch public official university logo bytes (opt-in)</td>
+                    <td>Anonymous GET only to that domain</td>
+                    <td>Cached in browser session memory until Reset or tab close</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Analytics, Ads &amp; Tracking Cookies</th>
+                    <td>Not used</td>
+                    <td>None</td>
+                    <td>None collected</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section aria-labelledby="third-party-heading">
+            <h2 id="third-party-heading">4. Third-Party Services &amp; Links</h2>
+            <p>
+              This application and Chrome extension do <strong>not</strong> use
+              third-party analytics, crash-reporting SDKs, advertising networks,
+              cookies, or external font/script CDNs. All PDF fonts and processing
+              libraries run locally inside the bundled application.
+            </p>
+            <p>
+              Generated PDFs and the UK Application Process guide contain
+              clickable external links to official government resources (such as
+              GOV.UK and UKCISA) and to the universities listed in your shortlist.
+              Opening those links takes you directly to third-party websites
+              governed by their own privacy policies.
+            </p>
+          </section>
+
+          <section aria-labelledby="controls-heading">
+            <h2 id="controls-heading">5. Retention &amp; Your Controls</h2>
+            <ul>
+              <li>
+                <strong>Clear session immediately:</strong> Click
+                <strong>Reset</strong> in the converter header to wipe the entered
+                Student Name, imported workbook, checklist state, uploaded images,
+                and cached logos right away.
+              </li>
+              <li>
+                <strong>Automatic session cleanup:</strong> Closing the web page
+                or closing all extension converter tabs automatically clears
+                browser memory and <code>chrome.storage.session</code>.
+              </li>
+              <li>
+                <strong>Revoke Chrome site access:</strong> In Chrome, open
+                <code>chrome://extensions</code> →
+                <strong>Eccho Overseas — Course Shortlist PDF</strong> →
+                <strong>Details</strong> → <strong>Site access</strong> to review
+                or revoke permission for any university domain, or uninstall the
+                extension to remove all extension data.
+              </li>
+            </ul>
+          </section>
+
+          <section aria-labelledby="changes-heading">
+            <h2 id="changes-heading">6. Updates to This Privacy Policy</h2>
+            <p>
+              If we update features, extension permissions, or data-handling
+              practices in a future release, we will update this page and revise
+              the <q>Effective &amp; last updated</q> date at the top before
+              publishing the updated release.
+            </p>
+          </section>
+
+          <section aria-labelledby="contact-heading">
+            <h2 id="contact-heading">7. Contact Us</h2>
+            <p>
+              If you have any questions or privacy requests regarding the Eccho
+              Overseas Course Shortlist Converter or Chrome extension, please
+              contact us:
+            </p>
+            <dl class="contact-list">
+              <div class="contact-row">
+                <dt>Organisation</dt>
+                <dd>Eccho Overseas</dd>
+              </div>
+              <div class="contact-row">
+                <dt>Email</dt>
+                <dd>
+                  <a href="mailto:info@ecchouk.co.uk">info@ecchouk.co.uk</a>
+                </dd>
+              </div>
+              <div class="contact-row">
+                <dt>Website</dt>
+                <dd>
+                  <a href="https://www.ecchooverseas.co.in/"
+                    >https://www.ecchooverseas.co.in/</a
+                  >
+                </dd>
+              </div>
+            </dl>
+          </section>
+        </article>
+      </div>
+    </main>
+
+    <footer class="policy-footer">
+      Eccho Overseas · Local browser processing ·
+      <a href="/index.html">Course Shortlist Converter</a>
+    </footer>
+  </body>
+</html>

@@ -2120,7 +2120,13 @@ export function App() {
 
       <footer className="site-footer">
         {BRAND_CONFIG.brandName} · Local browser processing · Student data and
-        spreadsheets never leave your device
+        spreadsheets never leave your device ·{' '}
+        <a
+          href={inExtensionTab ? './privacy-policy.html' : '/privacy-policy'}
+          className="site-footer-link"
+        >
+          Privacy Policy
+        </a>
       </footer>
 
       {pendingSheetChoice && workbookSession && (

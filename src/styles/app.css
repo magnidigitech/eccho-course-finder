@@ -1501,3 +1501,14 @@ summary:focus-visible {
   color: var(--text-muted);
   text-align: center;
 }
+
+.site-footer-link {
+  color: var(--brand-dark);
+  font-weight: 500;
+  text-underline-offset: 2px;
+}
+
+.site-footer-link:focus-visible {
+  outline: 2px solid var(--brand-dark);
+  outline-offset: 2px;
+}
