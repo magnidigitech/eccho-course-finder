@@ -33,7 +33,6 @@ type ColumnKey =
   | 'sourceIndex'
   | 'programName'
   | 'university'
-  | 'universityRanking'
   | 'websiteUrl'
   | 'campus'
   | 'country'
@@ -45,16 +44,11 @@ type ColumnKey =
   | 'scholarshipAvailable'
   | 'faculties'
   | 'duolingo'
-  | 'ellt'
-  | 'esol'
   | 'waiverCbseIcse'
   | 'waiverUk'
   | 'waiverStateBoard'
   | 'ielts'
-  | 'kaplan'
-  | 'languageCertSelt'
   | 'pte'
-  | 'skillsForEnglish'
   | 'toefl';
 
 const HEADER_ALIASES: Record<string, ColumnKey> = {
@@ -62,8 +56,6 @@ const HEADER_ALIASES: Record<string, ColumnKey> = {
   'program name': 'programName',
   'programme name': 'programName',
   university: 'university',
-  'university ranking (key factor)': 'universityRanking',
-  'university ranking': 'universityRanking',
   'website url': 'websiteUrl',
   website: 'websiteUrl',
   campus: 'campus',
@@ -79,46 +71,46 @@ const HEADER_ALIASES: Record<string, ColumnKey> = {
   faculties: 'faculties',
   faculty: 'faculties',
   duolingo: 'duolingo',
-  ellt: 'ellt',
-  esol: 'esol',
   'english waiver based on class 12th cbse/icse marks': 'waiverCbseIcse',
   'i want english waiver based on uk qualification': 'waiverUk',
   'i want english waiver based on my class 12th marks (state board)':
     'waiverStateBoard',
   ielts: 'ielts',
-  'kaplan test of english': 'kaplan',
-  'language certificate academic selt': 'languageCertSelt',
   pte: 'pte',
-  'skills for english': 'skillsForEnglish',
   toefl: 'toefl',
 };
 
-const ENGLISH_TEST_FIELDS: Array<{ key: ColumnKey; label: string }> = [
+const ENGLISH_TEST_FIELDS: Array<{
+  key: EnglishTestRow['key'];
+  label: string;
+}> = [
   { key: 'ielts', label: 'IELTS' },
   { key: 'pte', label: 'PTE' },
   { key: 'toefl', label: 'TOEFL' },
   { key: 'duolingo', label: 'Duolingo' },
-  { key: 'ellt', label: 'ELLT' },
-  { key: 'esol', label: 'ESOL' },
-  { key: 'kaplan', label: 'Kaplan Test of English' },
-  { key: 'languageCertSelt', label: 'Language Certificate Academic SELT' },
-  { key: 'skillsForEnglish', label: 'Skills For English' },
 ];
 
-const ENGLISH_WAIVER_FIELDS: Array<{ key: ColumnKey; label: string }> = [
+const ENGLISH_WAIVER_FIELDS: Array<{
+  key: EnglishWaiverRow['key'];
+  label: string;
+}> = [
   {
     key: 'waiverCbseIcse',
-    label: 'Class 12th CBSE / ICSE Marks',
+    label: 'Class 12 CBSE/ICSE',
   },
   {
     key: 'waiverUk',
-    label: 'UK Qualification',
+    label: 'UK qualification',
   },
   {
     key: 'waiverStateBoard',
-    label: 'Class 12th Marks (State Board)',
+    label: 'Class 12 State Board',
   },
 ];
+
+export function normalizeUniversityKey(universityName: string): string {
+  return universityName.trim().replace(/\s+/g, ' ').toLowerCase();
+}
 
 export function normalizeHeaderName(raw: RawCell): string {
   if (raw === null || raw === undefined) {
@@ -185,7 +177,6 @@ export function detectWorkbookCurrency(
   sheets: WorkbookSheet[],
   selectedSheetName: string,
 ): { currency: CurrencyCode | null; reason: string | null } {
-  // 1. Check Comparison sheet for explicit section/fee currency like "COST & FUNDING (GBP)"
   const comparisonSheet = sheets.find(
     (s) => s.name.trim().toLowerCase() === 'comparison',
   );
@@ -209,7 +200,6 @@ export function detectWorkbookCurrency(
     }
   }
 
-  // 2. Check Yearly Tuition Fee header on selected sheet
   const activeSheet = sheets.find((s) => s.name === selectedSheetName);
   if (activeSheet && activeSheet.rows.length > 0) {
     const headerRow = activeSheet.rows[0];
@@ -229,7 +219,6 @@ export function detectWorkbookCurrency(
       }
     }
 
-    // 3. Check if every non-empty tuition cell carries an unambiguous currency indicator
     if (tuitionColIndex >= 0) {
       const detectedPerRow = new Set<CurrencyCode>();
       let nonEmptyTuitionCount = 0;
@@ -242,7 +231,9 @@ export function detectWorkbookCurrency(
         if (display === NOT_SPECIFIED) continue;
 
         nonEmptyTuitionCount += 1;
-        const isoMatch = display.match(/\b(GBP|USD|EUR|AUD|CAD|NZD|SGD|INR|CHF|AED)\b/i);
+        const isoMatch = display.match(
+          /\b(GBP|USD|EUR|AUD|CAD|NZD|SGD|INR|CHF|AED)\b/i,
+        );
         if (isoMatch) {
           const code = asCurrencyCode(isoMatch[1]);
           if (code) detectedPerRow.add(code);
@@ -253,7 +244,6 @@ export function detectWorkbookCurrency(
         } else if (display.includes('₹')) {
           detectedPerRow.add('INR');
         } else {
-          // At least one cell is a plain number or ambiguous value without currency
           detectedPerRow.clear();
           break;
         }
@@ -312,6 +302,7 @@ export function buildWorkbookSession(
 /**
  * Parses and validates all course rows from the selected worksheet.
  * Preserves source order, exact text, zero values, mixed strings, and no deduplication.
+ * Excludes removed fields (University Ranking, ELLT, ESOL, Kaplan, SELT, Skills For English).
  */
 export function parseCoursesFromSheet(
   sheets: WorkbookSheet[],
@@ -346,7 +337,9 @@ export function parseCoursesFromSheet(
 
   if (missingRequired.length > 0) {
     const foundHeaders = headerRow
-      .map((cell) => (cell === null || cell === undefined ? '' : String(cell).trim()))
+      .map((cell) =>
+        cell === null || cell === undefined ? '' : String(cell).trim(),
+      )
       .filter((h) => h.length > 0);
     const previewHeaders =
       foundHeaders.length > 0
@@ -375,7 +368,9 @@ export function parseCoursesFromSheet(
     const rawUniversity = getCell(row, 'university');
 
     const programName = isCellBlank(rawProgram) ? '' : String(rawProgram).trim();
-    const university = isCellBlank(rawUniversity) ? '' : String(rawUniversity).trim();
+    const university = isCellBlank(rawUniversity)
+      ? ''
+      : String(rawUniversity).trim();
 
     if (!programName || !university) {
       const missingFields = [
@@ -387,7 +382,9 @@ export function parseCoursesFromSheet(
       );
     }
 
-    const entryRequirementRaw = normalizeDisplayValue(getCell(row, 'entryRequirement'));
+    const entryRequirementRaw = normalizeDisplayValue(
+      getCell(row, 'entryRequirement'),
+    );
     const website = normalizeWebsiteUrl(getCell(row, 'websiteUrl'));
 
     const englishTests: EnglishTestRow[] = ENGLISH_TEST_FIELDS.map((field) => ({
@@ -396,18 +393,20 @@ export function parseCoursesFromSheet(
       value: normalizeDisplayValue(getCell(row, field.key)),
     }));
 
-    const englishWaivers: EnglishWaiverRow[] = ENGLISH_WAIVER_FIELDS.map((field) => ({
-      key: field.key,
-      label: field.label,
-      value: normalizeDisplayValue(getCell(row, field.key)),
-    }));
+    const englishWaivers: EnglishWaiverRow[] = ENGLISH_WAIVER_FIELDS.map(
+      (field) => ({
+        key: field.key,
+        label: field.label,
+        value: normalizeDisplayValue(getCell(row, field.key)),
+      }),
+    );
 
     courses.push({
       rowNumber: excelRowNumber,
       sourceIndex: normalizeOptionalValue(getCell(row, 'sourceIndex')),
       programName,
       university,
-      universityRanking: normalizeDisplayValue(getCell(row, 'universityRanking')),
+      universityKey: normalizeUniversityKey(university),
       websiteUrlDisplay: website.display,
       websiteHref: website.href,
       campus: normalizeDisplayValue(getCell(row, 'campus')),
@@ -418,7 +417,9 @@ export function parseCoursesFromSheet(
       entryRequirementRaw,
       entryRequirementLines: formatEntryRequirementLines(entryRequirementRaw),
       yearlyTuitionFee: parseTuitionFee(getCell(row, 'yearlyTuitionFee')),
-      scholarshipAvailable: normalizeDisplayValue(getCell(row, 'scholarshipAvailable')),
+      scholarshipAvailable: normalizeDisplayValue(
+        getCell(row, 'scholarshipAvailable'),
+      ),
       faculty: normalizeOptionalValue(getCell(row, 'faculties')),
       englishTests,
       englishWaivers,
@@ -437,7 +438,9 @@ export function parseCoursesFromSheet(
 /**
  * Reads an uploaded Excel file completely in browser memory.
  */
-export async function parseExcelFileInBrowser(file: File): Promise<WorkbookSession> {
+export async function parseExcelFileInBrowser(
+  file: File,
+): Promise<WorkbookSession> {
   const lowerName = file.name.toLowerCase();
   if (lowerName.endsWith('.xls')) {
     throw new ExcelValidationError(
@@ -476,4 +479,3 @@ export async function parseExcelFileInBrowser(file: File): Promise<WorkbookSessi
 
   return buildWorkbookSession(file.name, sheets);
 }
-

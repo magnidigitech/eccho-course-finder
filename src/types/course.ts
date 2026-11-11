@@ -47,13 +47,13 @@ export interface WorkbookSession {
 }
 
 export interface EnglishTestRow {
-  key: string;
+  key: 'ielts' | 'pte' | 'toefl' | 'duolingo';
   label: string;
   value: string;
 }
 
 export interface EnglishWaiverRow {
-  key: string;
+  key: 'waiverCbseIcse' | 'waiverUk' | 'waiverStateBoard';
   label: string;
   value: string;
 }
@@ -68,7 +68,7 @@ export interface CourseRecord {
   sourceIndex: string | null;
   programName: string;
   university: string;
-  universityRanking: string;
+  universityKey: string;
   websiteUrlDisplay: string;
   websiteHref: string | null;
   campus: string;
@@ -81,7 +81,7 @@ export interface CourseRecord {
   yearlyTuitionFee: TuitionFeeValue;
   scholarshipAvailable: string;
   faculty: string | null;
-  englishTests: EnglishTestRow[];
+  englishTests: EnglishTestRow[]; // Strictly IELTS, PTE, TOEFL, Duolingo
   englishWaivers: EnglishWaiverRow[];
 }
 
@@ -91,6 +91,21 @@ export interface InMemoryLogo {
   bytes: Uint8Array;
   previewUrl: string;
 }
+
+export type UniversityLogoSource = 'packaged' | 'uploaded' | 'fetched' | 'initials';
+
+export interface UniversityLogoEntry {
+  universityKey: string;
+  universityName: string;
+  websiteHref: string | null;
+  domain: string | null;
+  initials: string;
+  source: UniversityLogoSource;
+  logo: InMemoryLogo | null;
+  lookupNote?: string;
+}
+
+export type UniversityLogoMap = Record<string, UniversityLogoEntry>;
 
 export interface PageFitFailure {
   courseNumber: number;
@@ -108,6 +123,8 @@ export type PdfGenerationResult =
       ok: true;
       pdfBytes: Uint8Array;
       pageCount: number;
+      summaryPageCount: number;
+      courseStartPage: number;
       coursePageCount: number;
       guideStartPage: number;
       checklistStartPage: number;
@@ -118,4 +135,3 @@ export type PdfGenerationResult =
       failures: PageFitFailure[];
       message: string;
     };
-

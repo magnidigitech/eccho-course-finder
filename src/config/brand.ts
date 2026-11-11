@@ -34,21 +34,21 @@ export interface BrandConfig {
 export const BRAND_CONFIG: BrandConfig = {
   brandName: 'Eccho Overseas',
   wordmark: 'ECCHO OVERSEAS',
-  documentTitle: 'Course Shortlist',
+  documentTitle: 'Personalised Course Shortlist',
   logoAssetPath: defaultEcchoLogoUrl,
   colors: {
     brandPrimary: '#3d8a3a',
     brandDark: '#265c24',
-    brandHover: '#31722e',
-    brandSoft: '#eef7ee',
-    brandBorder: '#bdddbb',
-    surfaceTint: '#f6faf6',
-    surfaceAlt: '#ebf4eb',
-    border: '#d5e3d4',
-    borderStrong: '#b5cdb4',
-    textPrimary: '#142317',
-    textSecondary: '#3b513e',
-    textMuted: '#586e5b',
+    brandHover: '#30702e',
+    brandSoft: '#eef4ed',
+    brandBorder: '#c5d8c3',
+    surfaceTint: '#f6f9f5',
+    surfaceAlt: '#edf3ec',
+    border: '#dce4db',
+    borderStrong: '#c2cfc0',
+    textPrimary: '#181e1a',
+    textSecondary: '#475249',
+    textMuted: '#68746a',
     white: '#FFFFFF',
   },
   contact: {
@@ -58,7 +58,7 @@ export const BRAND_CONFIG: BrandConfig = {
     address: '',
   },
   footerNote:
-    'Fees, scholarships and entry requirements are subject to change. Confirm details with the university.',
+    'Fees, scholarships and entry requirements are subject to change. Confirm with the university.',
 };
 
 export interface ContactEntry {

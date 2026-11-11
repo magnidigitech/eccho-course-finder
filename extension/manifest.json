@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "Eccho Overseas — Course Shortlist PDF",
+  "version": "2.0.0",
+  "description": "Convert Excel course shortlists into branded Eccho Overseas A4 PDFs with UK application guide and interactive checklist.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "Open Eccho Overseas Course Shortlist",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": ["storage"],
+  "optional_host_permissions": [
+    "https://*.ac.uk/*",
+    "https://*.edu/*",
+    "https://*.edu.au/*",
+    "https://*.ca/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self';"
+  }
+}
+

@@ -1,7 +1,5 @@
 import {
-  useCallback,
   useEffect,
-  useId,
   useMemo,
   useRef,
   useState,
@@ -10,24 +8,39 @@ import {
 } from 'react';
 import {
   AlertCircle,
-  BookOpenCheck,
-  CheckCircle2,
+  ArrowLeft,
+  ArrowRight,
+  Award,
+  Building2,
+  Calendar,
   CheckSquare,
   ChevronLeft,
   ChevronRight,
+  Clock,
+  Coins,
   Download,
+  ExternalLink,
+  Eye,
   FileSpreadsheet,
-  ImagePlus,
+  FileText,
+  Globe,
+  GraduationCap,
+  Image as ImageIcon,
+  Landmark,
+  Loader2,
+  MapPin,
+  RefreshCw,
   RotateCcw,
-  Trash2,
   Upload,
 } from 'lucide-react';
 import { PdfPreviewCanvas } from './components/PdfPreviewCanvas';
-import { BRAND_CONFIG, getNonEmptyContactEntries } from './config/brand';
+import { BRAND_CONFIG } from './config/brand';
 import {
   CHECKLIST_READER_INSTRUCTION,
   DOCUMENT_CHECKLIST_GROUPS,
   GUIDANCE_CHECKED_DATE,
+  OFFICIAL_GUIDANCE_LINKS,
+  UK_APPLICATION_STEPS,
 } from './config/ukGuide';
 import {
   CURRENCY_OPTIONS,
@@ -35,1074 +48,1898 @@ import {
   type CourseRecord,
   type CurrencyCode,
   type InMemoryLogo,
+  type UniversityLogoEntry,
+  type UniversityLogoMap,
   type WorkbookSession,
 } from './types/course';
 import {
-  detectWorkbookCurrency,
+  ExcelValidationError,
   parseCoursesFromSheet,
   parseExcelFileInBrowser,
 } from './utils/excelParser';
-import { loadLogoInMemory } from './utils/logoLoader';
+import {
+  clearExtensionSessionState,
+  deserializeInMemoryLogo,
+  isChromeExtensionTab,
+  loadExtensionSessionState,
+  registerExtensionConverterTab,
+  saveExtensionSessionState,
+} from './utils/extensionSession';
+import { loadLogoInMemory, revokeLogoPreviewUrl } from './utils/logoLoader';
 import { generateCourseShortlistPdf } from './utils/pdfGenerator';
-import { buildShortlistFilename, formatTuitionFee } from './utils/valueFormatting';
+import {
+  attemptWebsiteLogoLookup,
+  getUniversityInitials,
+  resolveUniversityLogosForCourses,
+  revokeUniversityLogoUrls,
+} from './utils/universityLogos';
+import {
+  NOT_SPECIFIED,
+  buildShortlistFilename,
+  formatTuitionFee,
+} from './utils/valueFormatting';
 
-interface PdfPlanMeta {
+type ActiveSection =
+  | { kind: 'summary' }
+  | { kind: 'course'; index: number }
+  | { kind: 'guide' }
+  | { kind: 'checklist' };
+
+type ViewMode = 'structured' | 'pdf';
+
+interface PdfMeta {
+  pdfBytes: Uint8Array;
   pageCount: number;
+  summaryPageCount: number;
+  courseStartPage: number;
   coursePageCount: number;
   guideStartPage: number;
   checklistStartPage: number;
 }
 
-const TOTAL_CHECKLIST_ITEMS = DOCUMENT_CHECKLIST_GROUPS.reduce(
-  (sum, grp) => sum + grp.items.length,
-  0,
-);
+function UniversityLogoBox({
+  entry,
+  universityName,
+}: {
+  entry?: UniversityLogoEntry;
+  universityName: string;
+}) {
+  const initials = entry?.initials ?? getUniversityInitials(universityName);
+  return (
+    <div className="univ-logo-frame">
+      {entry?.logo ? (
+        <img
+          src={entry.logo.previewUrl}
+          alt={`${universityName} logo`}
+        />
+      ) : (
+        <span className="univ-logo-initials" aria-label={`${universityName} initials`}>
+          {initials}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function splitAcademicDisplayLine(
+  line: string,
+): { label: string; value: string } | null {
+  const match = line.match(/^([^:\n]{2,56}):\s+(.+)$/);
+  if (!match) return null;
+  const label = match[1].trim();
+  const value = match[2].trim();
+  if (!label || !value || /^https?$/i.test(label)) return null;
+  return { label, value };
+}
+
+function formatDestinationCountries(courses: CourseRecord[]): string {
+  const countries: string[] = [];
+  const seen = new Set<string>();
+  for (const c of courses) {
+    if (c.country === NOT_SPECIFIED) continue;
+    const key = c.country.trim().toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      countries.push(c.country.trim());
+    }
+  }
+  if (countries.length === 0) return 'Destination not specified';
+  if (countries.length <= 2) return countries.join(', ');
+  return `${countries[0]} + ${countries.length - 1} more`;
+}
 
 export function App() {
-  const studentNameId = useId();
-  const studentNameHintId = useId();
-  const excelInputId = useId();
-  const logoInputId = useId();
-  const sheetSelectId = useId();
-  const currencySelectId = useId();
-
-  const excelInputRef = useRef<HTMLInputElement | null>(null);
-  const logoInputRef = useRef<HTMLInputElement | null>(null);
-  const pdfObjectUrlRef = useRef<string | null>(null);
-  const logoObjectUrlRef = useRef<string | null>(null);
+  const inExtensionTab = useMemo(() => isChromeExtensionTab(), []);
 
   const [studentName, setStudentName] = useState<string>('');
-  const [studentNameTouched, setStudentNameTouched] = useState<boolean>(false);
-
-  const [session, setSession] = useState<WorkbookSession | null>(null);
+  const [workbookSession, setWorkbookSession] =
+    useState<WorkbookSession | null>(null);
   const [selectedSheet, setSelectedSheet] = useState<string>('');
-  const [selectedCurrency, setSelectedCurrency] = useState<CurrencyCode | ''>('');
+  const [pendingSheetChoice, setPendingSheetChoice] = useState<string[] | null>(
+    null,
+  );
   const [courses, setCourses] = useState<CourseRecord[]>([]);
-  const [activePageNumber, setActivePageNumber] = useState<number>(1);
-
+  const [selectedCurrency, setSelectedCurrency] = useState<CurrencyCode | ''>(
+    '',
+  );
   const [checklistSelections, setChecklistSelections] =
     useState<ChecklistSelections>({});
+  const [customBrandLogo, setCustomBrandLogo] = useState<InMemoryLogo | null>(
+    null,
+  );
+  const [universityLogos, setUniversityLogos] = useState<UniversityLogoMap>({});
+  const [lookingUpUnivKey, setLookingUpUnivKey] = useState<string | null>(null);
 
-  const [customLogo, setCustomLogo] = useState<InMemoryLogo | null>(null);
-  const [isParsing, setIsParsing] = useState<boolean>(false);
+  const [activeSection, setActiveSection] = useState<ActiveSection>({
+    kind: 'summary',
+  });
+  const [viewMode, setViewMode] = useState<ViewMode>('structured');
+  const [activePdfPage, setActivePdfPage] = useState<number>(1);
+  const [pdfMeta, setPdfMeta] = useState<PdfMeta | null>(null);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
-  const [isDragOver, setIsDragOver] = useState<boolean>(false);
 
-  const [parseError, setParseError] = useState<string | null>(null);
-  const [fitError, setFitError] = useState<string | null>(null);
-  const [logoError, setLogoError] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [sessionHydrated, setSessionHydrated] = useState<boolean>(!inExtensionTab);
 
-  const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
-  const [pdfPlan, setPdfPlan] = useState<PdfPlanMeta | null>(null);
-  const [pdfObjectUrl, setPdfObjectUrl] = useState<string | null>(null);
+  const excelInputRef = useRef<HTMLInputElement | null>(null);
+  const brandLogoInputRef = useRef<HTMLInputElement | null>(null);
+  const univLogoInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
-  const contactEntries = useMemo(() => getNonEmptyContactEntries(), []);
+  const customBrandLogoRef = useRef<InMemoryLogo | null>(null);
+  const universityLogosRef = useRef<UniversityLogoMap>({});
+  customBrandLogoRef.current = customBrandLogo;
+  universityLogosRef.current = universityLogos;
+
+  const activeCurrency: CurrencyCode | null = useMemo(() => {
+    if (selectedCurrency) return selectedCurrency;
+    return workbookSession?.detectedCurrency ?? null;
+  }, [selectedCurrency, workbookSession]);
+
+  const effectiveBrandLogoSrc =
+    customBrandLogo?.previewUrl ?? BRAND_CONFIG.logoAssetPath ?? '';
+
   const trimmedStudentName = studentName.trim();
-  const checkedCount = useMemo(
+  const uniqueUniversities = useMemo(() => {
+    const list: CourseRecord[] = [];
+    const seen = new Set<string>();
+    for (const c of courses) {
+      if (seen.has(c.universityKey)) continue;
+      seen.add(c.universityKey);
+      list.push(c);
+    }
+    return list;
+  }, [courses]);
+
+  const tickedChecklistCount = useMemo(
     () => Object.values(checklistSelections).filter(Boolean).length,
     [checklistSelections],
   );
+  const totalChecklistCount = useMemo(
+    () =>
+      DOCUMENT_CHECKLIST_GROUPS.reduce((sum, g) => sum + g.items.length, 0),
+    [],
+  );
 
-  const revokePdfUrl = useCallback(() => {
-    if (pdfObjectUrlRef.current) {
-      URL.revokeObjectURL(pdfObjectUrlRef.current);
-      pdfObjectUrlRef.current = null;
-    }
-    setPdfObjectUrl(null);
-  }, []);
-
-  const revokeLogoUrl = useCallback(() => {
-    if (logoObjectUrlRef.current) {
-      URL.revokeObjectURL(logoObjectUrlRef.current);
-      logoObjectUrlRef.current = null;
-    }
-  }, []);
-
+  // Revoke in-memory object URLs on final unmount
   useEffect(() => {
     return () => {
-      if (pdfObjectUrlRef.current) {
-        URL.revokeObjectURL(pdfObjectUrlRef.current);
-        pdfObjectUrlRef.current = null;
-      }
-      if (logoObjectUrlRef.current) {
-        URL.revokeObjectURL(logoObjectUrlRef.current);
-        logoObjectUrlRef.current = null;
-      }
+      revokeLogoPreviewUrl(customBrandLogoRef.current);
+      revokeUniversityLogoUrls(universityLogosRef.current);
     };
   }, []);
 
-  // Parse selected worksheet whenever session or selectedSheet changes
+  // Chrome extension tab registration & ephemeral session restore
   useEffect(() => {
-    if (!session || !selectedSheet) {
-      setCourses([]);
-      return;
-    }
+    if (!inExtensionTab) return;
+    let cancelled = false;
 
-    try {
-      const parsed = parseCoursesFromSheet(session.sheets, selectedSheet);
-      setCourses(parsed);
-      setActivePageNumber(1);
-      setParseError(null);
-    } catch (err) {
-      setCourses([]);
-      setPdfBytes(null);
-      setPdfPlan(null);
-      revokePdfUrl();
-      setFitError(null);
-      setParseError(
-        err instanceof Error
-          ? err.message
-          : 'Unable to validate the selected worksheet.',
-      );
-    }
-  }, [session, selectedSheet, revokePdfUrl]);
+    void (async () => {
+      await registerExtensionConverterTab();
+      const saved = await loadExtensionSessionState();
+      if (cancelled || !saved) {
+        setSessionHydrated(true);
+        return;
+      }
 
-  // Generate actual personalized A4 PDF bytes (Courses + Guide + Interactive Checklist)
+      setStudentName(saved.studentName);
+      setChecklistSelections(saved.checklistSelections ?? {});
+      setSelectedCurrency(saved.selectedCurrency ?? '');
+
+      if (saved.customBrandLogo) {
+        const restoredBrand = deserializeInMemoryLogo(saved.customBrandLogo);
+        if (restoredBrand) setCustomBrandLogo(restoredBrand);
+      }
+
+      if (saved.workbookSession && saved.selectedSheet) {
+        try {
+          const parsedCourses = parseCoursesFromSheet(
+            saved.workbookSession.sheets,
+            saved.selectedSheet,
+          );
+          const seedMap: UniversityLogoMap = {};
+          for (const [key, entry] of Object.entries(
+            saved.customUniversityLogos ?? {},
+          )) {
+            const deserialized = deserializeInMemoryLogo(entry.logo);
+            if (deserialized) {
+              seedMap[key] = {
+                universityKey: key,
+                universityName: entry.universityName,
+                websiteHref: null,
+                domain: null,
+                initials: getUniversityInitials(entry.universityName),
+                source: entry.source,
+                logo: deserialized,
+                lookupNote:
+                  entry.source === 'uploaded'
+                    ? 'Custom uploaded logo'
+                    : 'Fetched from university website',
+              };
+            }
+          }
+          const resolvedLogos = await resolveUniversityLogosForCourses(
+            parsedCourses,
+            seedMap,
+          );
+          if (!cancelled) {
+            setWorkbookSession(saved.workbookSession);
+            setSelectedSheet(saved.selectedSheet);
+            setCourses(parsedCourses);
+            setUniversityLogos(resolvedLogos);
+            setActivePdfPage(Math.max(1, saved.activePageNumber || 1));
+          }
+        } catch {
+          // Fallback cleanly if restored sheet could not be parsed
+        }
+      }
+
+      if (!cancelled) {
+        setSessionHydrated(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [inExtensionTab]);
+
+  // Persist ephemeral extension session (never runs on regular Vercel web app)
   useEffect(() => {
-    if (courses.length === 0 || !selectedCurrency || !trimmedStudentName) {
-      setPdfBytes(null);
-      setPdfPlan(null);
-      revokePdfUrl();
-      setFitError(null);
-      setIsGeneratingPdf(false);
+    if (!inExtensionTab || !sessionHydrated) return;
+    const handle = window.setTimeout(() => {
+      void saveExtensionSessionState({
+        studentName,
+        workbookSession,
+        selectedSheet,
+        selectedCurrency,
+        activePageNumber: activePdfPage,
+        checklistSelections,
+        customBrandLogo,
+        universityLogos,
+      });
+    }, 180);
+    return () => window.clearTimeout(handle);
+  }, [
+    inExtensionTab,
+    sessionHydrated,
+    studentName,
+    workbookSession,
+    selectedSheet,
+    selectedCurrency,
+    activePdfPage,
+    checklistSelections,
+    customBrandLogo,
+    universityLogos,
+  ]);
+
+  // Regenerate live PDF document whenever inputs settle
+  useEffect(() => {
+    if (courses.length === 0 || !trimmedStudentName || !activeCurrency) {
+      setPdfMeta(null);
       return;
     }
 
     let cancelled = false;
     setIsGeneratingPdf(true);
-    setFitError(null);
 
-    generateCourseShortlistPdf({
-      courses,
-      currency: selectedCurrency,
-      studentName,
-      checklistSelections,
-      logo: customLogo,
-    })
-      .then((result) => {
-        if (cancelled) return;
-        if (!result.ok) {
-          setPdfBytes(null);
-          setPdfPlan(null);
-          revokePdfUrl();
-          setFitError(result.message);
-          setIsGeneratingPdf(false);
-          return;
-        }
-
-        revokePdfUrl();
-        const nextBlob = new Blob([new Uint8Array(result.pdfBytes)], {
-          type: 'application/pdf',
-        });
-        const nextUrl = URL.createObjectURL(nextBlob);
-        pdfObjectUrlRef.current = nextUrl;
-
-        setPdfBytes(result.pdfBytes);
-        setPdfPlan({
-          pageCount: result.pageCount,
-          coursePageCount: result.coursePageCount,
-          guideStartPage: result.guideStartPage,
-          checklistStartPage: result.checklistStartPage,
-        });
-        setActivePageNumber((prev) =>
-          Math.min(Math.max(1, prev), result.pageCount),
-        );
-        setPdfObjectUrl(nextUrl);
-        setFitError(null);
-        setIsGeneratingPdf(false);
+    const timer = window.setTimeout(() => {
+      void generateCourseShortlistPdf({
+        courses,
+        currency: activeCurrency,
+        studentName: trimmedStudentName,
+        checklistSelections,
+        universityLogos,
+        logo: customBrandLogo,
       })
-      .catch(() => {
-        if (cancelled) return;
-        setPdfBytes(null);
-        setPdfPlan(null);
-        revokePdfUrl();
-        setFitError(
-          'PDF generation failed unexpectedly. Please check the workbook values and try again.',
-        );
-        setIsGeneratingPdf(false);
-      });
+        .then((res) => {
+          if (cancelled) return;
+          setIsGeneratingPdf(false);
+          if (res.ok) {
+            setErrorMessage(null);
+            setPdfMeta({
+              pdfBytes: res.pdfBytes,
+              pageCount: res.pageCount,
+              summaryPageCount: res.summaryPageCount,
+              courseStartPage: res.courseStartPage,
+              coursePageCount: res.coursePageCount,
+              guideStartPage: res.guideStartPage,
+              checklistStartPage: res.checklistStartPage,
+            });
+            setActivePdfPage((prev) =>
+              prev < 1 ? 1 : prev > res.pageCount ? res.pageCount : prev,
+            );
+          } else {
+            setPdfMeta(null);
+            setErrorMessage(res.message);
+          }
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setIsGeneratingPdf(false);
+          setPdfMeta(null);
+          setErrorMessage(
+            'Could not generate the PDF in browser memory. Check the spreadsheet data and try again.',
+          );
+        });
+    }, 120);
 
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [
     courses,
-    selectedCurrency,
-    studentName,
     trimmedStudentName,
+    activeCurrency,
     checklistSelections,
-    customLogo,
-    revokePdfUrl,
+    universityLogos,
+    customBrandLogo,
   ]);
 
-  const handleExcelFile = async (file: File) => {
-    setIsParsing(true);
-    setParseError(null);
-    setFitError(null);
-    setPdfBytes(null);
-    setPdfPlan(null);
-    revokePdfUrl();
+  const applyWorksheet = async (
+    session: WorkbookSession,
+    sheetName: string,
+  ) => {
+    const parsedCourses = parseCoursesFromSheet(session.sheets, sheetName);
+    const resolvedLogos = await resolveUniversityLogosForCourses(
+      parsedCourses,
+      universityLogosRef.current,
+    );
+    revokeUniversityLogoUrls(universityLogosRef.current);
 
+    setWorkbookSession(session);
+    setSelectedSheet(sheetName);
+    setPendingSheetChoice(null);
+    setCourses(parsedCourses);
+    setSelectedCurrency(session.detectedCurrency ?? 'GBP');
+    setUniversityLogos(resolvedLogos);
+    setActiveSection({ kind: 'summary' });
+    setActivePdfPage(1);
+    setErrorMessage(null);
+  };
+
+  const handleExcelFile = async (file: File) => {
+    setErrorMessage(null);
     try {
-      const parsedSession = await parseExcelFileInBrowser(file);
-      setSession(parsedSession);
-      setSelectedSheet(parsedSession.selectedSheet);
-      setSelectedCurrency(parsedSession.detectedCurrency ?? '');
+      const session = await parseExcelFileInBrowser(file);
+      if (session.autoSelectedCourseData || session.sheetNames.length === 1) {
+        await applyWorksheet(session, session.selectedSheet);
+      } else {
+        setWorkbookSession(session);
+        setPendingSheetChoice(session.sheetNames);
+      }
     } catch (err) {
-      setSession(null);
-      setSelectedSheet('');
-      setSelectedCurrency('');
-      setCourses([]);
-      setParseError(
+      if (err instanceof ExcelValidationError) {
+        setErrorMessage(err.message);
+      } else {
+        setErrorMessage('Could not read the selected Excel file.');
+      }
+    }
+  };
+
+  const handleExcelInputChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    await handleExcelFile(file);
+  };
+
+  const handleDrop = async (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      await handleExcelFile(file);
+    }
+  };
+
+  const handleReset = () => {
+    revokeLogoPreviewUrl(customBrandLogoRef.current);
+    revokeUniversityLogoUrls(universityLogosRef.current);
+
+    setStudentName('');
+    setWorkbookSession(null);
+    setSelectedSheet('');
+    setPendingSheetChoice(null);
+    setCourses([]);
+    setSelectedCurrency('');
+    setChecklistSelections({});
+    setCustomBrandLogo(null);
+    setUniversityLogos({});
+    setActiveSection({ kind: 'summary' });
+    setViewMode('structured');
+    setActivePdfPage(1);
+    setPdfMeta(null);
+    setErrorMessage(null);
+    setLookingUpUnivKey(null);
+
+    if (excelInputRef.current) excelInputRef.current.value = '';
+    if (brandLogoInputRef.current) brandLogoInputRef.current.value = '';
+
+    if (inExtensionTab) {
+      void clearExtensionSessionState();
+    }
+  };
+
+  const handleBrandLogoUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const loaded = await loadLogoInMemory(file);
+      revokeLogoPreviewUrl(customBrandLogoRef.current);
+      setCustomBrandLogo(loaded);
+      setErrorMessage(null);
+    } catch (err) {
+      setErrorMessage(
+        err instanceof Error ? err.message : 'Could not load brand logo image.',
+      );
+    }
+  };
+
+  const handleUniversityLogoUpload = async (
+    course: CourseRecord,
+    e: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const loaded = await loadLogoInMemory(file);
+      const prevEntry = universityLogosRef.current[course.universityKey];
+      if (prevEntry?.logo) {
+        revokeLogoPreviewUrl(prevEntry.logo);
+      }
+      setUniversityLogos((prev) => ({
+        ...prev,
+        [course.universityKey]: {
+          universityKey: course.universityKey,
+          universityName: course.university,
+          websiteHref: course.websiteHref,
+          domain: prev[course.universityKey]?.domain ?? null,
+          initials: getUniversityInitials(course.university),
+          source: 'uploaded',
+          logo: loaded,
+          lookupNote: `Custom image (${loaded.fileName})`,
+        },
+      }));
+      setErrorMessage(null);
+    } catch (err) {
+      setErrorMessage(
         err instanceof Error
           ? err.message
-          : 'Failed to parse the Excel workbook.',
+          : 'Could not load the selected university logo.',
       );
-    } finally {
-      setIsParsing(false);
     }
   };
 
-  const handleExcelInputChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      void handleExcelFile(file);
+  const handleRestoreUniversityLogo = async (course: CourseRecord) => {
+    const prevEntry = universityLogosRef.current[course.universityKey];
+    if (prevEntry?.logo) {
+      revokeLogoPreviewUrl(prevEntry.logo);
     }
-    event.target.value = '';
-  };
-
-  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    setIsDragOver(false);
-    const file = event.dataTransfer.files?.[0];
-    if (file) {
-      void handleExcelFile(file);
+    const refreshed = await resolveUniversityLogosForCourses([course], {});
+    const restored = refreshed[course.universityKey];
+    if (restored) {
+      setUniversityLogos((prev) => ({
+        ...prev,
+        [course.universityKey]: restored,
+      }));
     }
   };
 
-  const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    if (!isDragOver) setIsDragOver(true);
+  const handleTryWebsiteLookup = async (course: CourseRecord) => {
+    const current = universityLogosRef.current[course.universityKey];
+    if (!current || !current.websiteHref) return;
+
+    setLookingUpUnivKey(course.universityKey);
+    const result = await attemptWebsiteLogoLookup(current);
+    setLookingUpUnivKey(null);
+
+    if (result.logo) {
+      if (current.logo) {
+        revokeLogoPreviewUrl(current.logo);
+      }
+      setUniversityLogos((prev) => ({
+        ...prev,
+        [course.universityKey]: {
+          ...prev[course.universityKey],
+          source: 'fetched',
+          logo: result.logo,
+          lookupNote: result.note,
+        },
+      }));
+    } else {
+      setUniversityLogos((prev) => ({
+        ...prev,
+        [course.universityKey]: {
+          ...prev[course.universityKey],
+          lookupNote: result.note,
+        },
+      }));
+    }
   };
 
-  const handleDragLeave = (event: DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    setIsDragOver(false);
-  };
+  const handleDownloadPdf = async () => {
+    if (!trimmedStudentName) {
+      setErrorMessage('Enter Student Name before downloading the PDF.');
+      return;
+    }
+    if (courses.length === 0 || !activeCurrency) {
+      setErrorMessage('Upload a valid Excel course file first.');
+      return;
+    }
 
-  const handleSheetChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    const nextSheet = event.target.value;
-    setSelectedSheet(nextSheet);
-    if (session) {
-      const detected = detectWorkbookCurrency(session.sheets, nextSheet);
-      setSession({
-        ...session,
-        selectedSheet: nextSheet,
-        autoSelectedCourseData:
-          nextSheet.trim().toLowerCase() === 'course data',
-        detectedCurrency: detected.currency,
-        currencySource: detected.reason,
+    let bytes = pdfMeta?.pdfBytes;
+    if (!bytes) {
+      setIsGeneratingPdf(true);
+      const res = await generateCourseShortlistPdf({
+        courses,
+        currency: activeCurrency,
+        studentName: trimmedStudentName,
+        checklistSelections,
+        universityLogos,
+        logo: customBrandLogo,
       });
-      setSelectedCurrency(detected.currency ?? '');
+      setIsGeneratingPdf(false);
+      if (!res.ok) {
+        setErrorMessage(res.message);
+        return;
+      }
+      bytes = res.pdfBytes;
+    }
+
+    const blob = new Blob([new Uint8Array(bytes)], {
+      type: 'application/pdf',
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = buildShortlistFilename(trimmedStudentName);
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const navigateToSection = (target: ActiveSection) => {
+    setActiveSection(target);
+    if (!pdfMeta) return;
+    if (target.kind === 'summary') {
+      setActivePdfPage(1);
+    } else if (target.kind === 'course') {
+      setActivePdfPage(pdfMeta.courseStartPage + target.index);
+    } else if (target.kind === 'guide') {
+      setActivePdfPage(pdfMeta.guideStartPage);
+    } else {
+      setActivePdfPage(pdfMeta.checklistStartPage);
     }
   };
 
-  const handleLogoChange = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
-
-    setLogoError(null);
-    try {
-      const nextLogo = await loadLogoInMemory(file);
-      revokeLogoUrl();
-      logoObjectUrlRef.current = nextLogo.previewUrl;
-      setCustomLogo(nextLogo);
-    } catch (err) {
-      setLogoError(
-        err instanceof Error ? err.message : 'Unable to load logo image.',
-      );
+  const handlePdfPageNavigation = (pageNumber: number) => {
+    setActivePdfPage(pageNumber);
+    if (!pdfMeta) return;
+    if (pageNumber <= pdfMeta.summaryPageCount) {
+      setActiveSection({ kind: 'summary' });
+    } else if (
+      pageNumber >= pdfMeta.courseStartPage &&
+      pageNumber < pdfMeta.courseStartPage + pdfMeta.coursePageCount
+    ) {
+      setActiveSection({
+        kind: 'course',
+        index: pageNumber - pdfMeta.courseStartPage,
+      });
+    } else if (
+      pageNumber >= pdfMeta.guideStartPage &&
+      pageNumber < pdfMeta.checklistStartPage
+    ) {
+      setActiveSection({ kind: 'guide' });
+    } else {
+      setActiveSection({ kind: 'checklist' });
     }
   };
 
-  const handleRestoreDefaultLogo = () => {
-    revokeLogoUrl();
-    setCustomLogo(null);
-    setLogoError(null);
-    if (logoInputRef.current) {
-      logoInputRef.current.value = '';
-    }
-  };
-
-  const handleToggleChecklistItem = (fieldName: string) => {
+  const toggleChecklistItem = (fieldName: string) => {
     setChecklistSelections((prev) => ({
       ...prev,
       [fieldName]: !prev[fieldName],
     }));
   };
 
-  const handleReset = () => {
-    revokePdfUrl();
-    revokeLogoUrl();
-    setStudentName('');
-    setStudentNameTouched(false);
-    setSession(null);
-    setSelectedSheet('');
-    setSelectedCurrency('');
-    setCourses([]);
-    setActivePageNumber(1);
-    setChecklistSelections({});
-    setCustomLogo(null);
-    setParseError(null);
-    setFitError(null);
-    setLogoError(null);
-    setPdfBytes(null);
-    setPdfPlan(null);
-    setIsParsing(false);
-    setIsGeneratingPdf(false);
-    setIsDragOver(false);
-    if (excelInputRef.current) {
-      excelInputRef.current.value = '';
-    }
-    if (logoInputRef.current) {
-      logoInputRef.current.value = '';
-    }
-  };
-
-  const handleDownloadPdf = () => {
-    if (!pdfObjectUrl || !canDownload) return;
-    const anchor = document.createElement('a');
-    anchor.href = pdfObjectUrl;
-    anchor.download = buildShortlistFilename(studentName);
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-  };
-
-  const studentNameRequiredWarning = Boolean(
-    !trimmedStudentName && (studentNameTouched || session),
-  );
-  const currencyRequired = Boolean(
-    session && courses.length > 0 && !selectedCurrency,
-  );
-  const canDownload = Boolean(
-    trimmedStudentName &&
-      session &&
-      courses.length > 0 &&
-      selectedCurrency &&
-      pdfBytes &&
-      pdfPlan &&
-      pdfObjectUrl &&
-      !parseError &&
-      !fitError &&
-      !isParsing &&
-      !isGeneratingPdf,
+  const destinationLabel = useMemo(
+    () => formatDestinationCountries(courses),
+    [courses],
   );
 
-  const hasWorkingState = Boolean(
-    studentName ||
-      session ||
-      customLogo ||
-      checkedCount > 0 ||
-      parseError ||
-      fitError ||
-      logoError,
-  );
+  const activeCourse =
+    activeSection.kind === 'course'
+      ? (courses[activeSection.index] ?? courses[0])
+      : null;
 
-  const headerLogoSrc = customLogo?.previewUrl ?? BRAND_CONFIG.logoAssetPath;
-  const totalPreviewPages = pdfPlan?.pageCount ?? courses.length;
-
-  const currentSectionTitle = useMemo(() => {
-    if (!pdfPlan) {
-      const course = courses[activePageNumber - 1];
-      return course?.programName ?? 'PDF Preview';
+  const activePageTitle = useMemo(() => {
+    if (!pdfMeta) return 'Course Shortlist Preview';
+    if (activePdfPage <= pdfMeta.summaryPageCount) {
+      return 'Personalised Course Shortlist Summary';
     }
-    if (activePageNumber <= pdfPlan.coursePageCount) {
-      return courses[activePageNumber - 1]?.programName ?? 'Course Shortlist';
+    if (
+      activePdfPage >= pdfMeta.courseStartPage &&
+      activePdfPage < pdfMeta.courseStartPage + pdfMeta.coursePageCount
+    ) {
+      const idx = activePdfPage - pdfMeta.courseStartPage;
+      return courses[idx]?.programName ?? 'Course Page';
     }
-    if (activePageNumber < pdfPlan.checklistStartPage) {
+    if (
+      activePdfPage >= pdfMeta.guideStartPage &&
+      activePdfPage < pdfMeta.checklistStartPage
+    ) {
       return 'UK Application Process';
     }
     return 'Required Documents Checklist';
-  }, [pdfPlan, activePageNumber, courses]);
+  }, [activePdfPage, courses, pdfMeta]);
+
+  const currencyLabel = useMemo(() => {
+    const match = CURRENCY_OPTIONS.find((c) => c.code === activeCurrency);
+    return match ? match.label : activeCurrency || 'GBP';
+  }, [activeCurrency]);
+
+  const summaryPageCount = pdfMeta?.summaryPageCount ?? 1;
+  const courseStartPage = pdfMeta?.courseStartPage ?? 2;
+  const guideStartPage = pdfMeta?.guideStartPage ?? 2 + courses.length;
+  const checklistStartPage =
+    pdfMeta?.checklistStartPage ?? guideStartPage + 2;
 
   return (
     <div className="app-shell">
       <header className="site-header">
-        <div className="header-inner">
+        <div className="site-header-inner">
           <div className="brand-lockup">
-            {headerLogoSrc ? (
+            {effectiveBrandLogoSrc ? (
               <img
-                src={headerLogoSrc}
-                alt={`${BRAND_CONFIG.brandName} logo`}
+                src={effectiveBrandLogoSrc}
+                alt={BRAND_CONFIG.brandName}
                 className="brand-logo-img"
               />
             ) : (
-              <div className="brand-wordmark" aria-label={BRAND_CONFIG.brandName}>
-                <span className="wordmark-primary">ECCHO</span>
-                <span className="wordmark-accent">OVERSEAS</span>
-              </div>
+              <strong>{BRAND_CONFIG.brandName}</strong>
             )}
-            <div className="brand-meta">
-              <h1 className="app-title">Course Shortlist &amp; UK Guide PDF</h1>
-              <p className="app-subtitle">
-                Private in-browser Excel to personalized A4 PDF
-              </p>
-            </div>
+            <span className="brand-divider" aria-hidden="true" />
+            <span className="brand-subtitle">Course Shortlist Converter</span>
           </div>
 
           <div className="header-actions">
-            <button
-              type="button"
-              className="btn btn-outline"
-              onClick={handleReset}
-              disabled={!hasWorkingState && !isParsing && !isGeneratingPdf}
-            >
-              <RotateCcw size={16} aria-hidden="true" />
-              Reset
-            </button>
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={handleDownloadPdf}
-              disabled={!canDownload}
-            >
-              <Download size={16} aria-hidden="true" />
-              Download PDF
-            </button>
+            <input
+              ref={excelInputRef}
+              type="file"
+              accept=".xlsx,.xlsm"
+              className="visually-hidden"
+              onChange={handleExcelInputChange}
+            />
+            <input
+              ref={brandLogoInputRef}
+              type="file"
+              accept=".png,.jpg,.jpeg,.svg,image/png,image/jpeg,image/svg+xml"
+              className="visually-hidden"
+              onChange={handleBrandLogoUpload}
+            />
+
+            {courses.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => excelInputRef.current?.click()}
+                >
+                  <Upload size={15} aria-hidden="true" />
+                  Replace Excel
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={handleReset}
+                >
+                  <RotateCcw size={15} aria-hidden="true" />
+                  Reset
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={
+                    isGeneratingPdf ||
+                    !trimmedStudentName ||
+                    courses.length === 0
+                  }
+                  onClick={handleDownloadPdf}
+                >
+                  {isGeneratingPdf ? (
+                    <Loader2
+                      size={15}
+                      className="spin-icon"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <Download size={15} aria-hidden="true" />
+                  )}
+                  Download Branded PDF
+                </button>
+              </>
+            )}
           </div>
         </div>
       </header>
 
-      <main className="main-content">
-        <section className="panel" aria-label="Student personalisation and workbook upload">
-          <div className="student-bar">
-            <div className="student-field-wrap">
-              <label htmlFor={studentNameId} className="field-label">
-                Student Name <span className="required-star" aria-hidden="true">*</span>
-              </label>
-              <input
-                id={studentNameId}
-                name="studentName"
-                type="text"
-                required
-                placeholder="Enter student's full name (e.g. Aarav Sharma)"
-                className={`text-input ${
-                  studentNameRequiredWarning ? 'text-input-attention' : ''
-                }`}
-                value={studentName}
-                aria-describedby={studentNameHintId}
-                aria-invalid={studentNameRequiredWarning ? 'true' : undefined}
-                onChange={(e) => setStudentName(e.target.value)}
-                onBlur={() => setStudentNameTouched(true)}
-              />
-              <p id={studentNameHintId} className="field-hint">
-                Used in every PDF header (“Prepared for {trimmedStudentName || 'Student Name'}”),
-                the UK guide &amp; checklist, and filename{' '}
-                <code>{buildShortlistFilename(studentName)}</code>.
+      <main className="main-container">
+        {errorMessage && (
+          <div role="alert" className="notice-banner notice-error">
+            <AlertCircle size={18} aria-hidden="true" />
+            <span>{errorMessage}</span>
+          </div>
+        )}
+
+        {courses.length === 0 ? (
+          <section className="onboarding-wrapper" aria-label="Course Shortlist Setup">
+            <div className="onboarding-intro">
+              <h1>Eccho Overseas Course Shortlist</h1>
+              <p>
+                Processed locally in your browser — upload an Excel sheet to
+                preview courses and export a branded A4 shortlist PDF.
               </p>
             </div>
-          </div>
 
-          <div className="intake-grid">
-            <div
-              className={`dropzone ${isDragOver ? 'dropzone-active' : ''} ${
-                session ? 'dropzone-loaded' : ''
-              }`}
-              onDrop={handleDrop}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-            >
-              <div className="dropzone-row">
-                <div className="dropzone-icon" aria-hidden="true">
-                  <FileSpreadsheet size={22} />
-                </div>
-                <div className="dropzone-copy">
-                  <h2 className="dropzone-heading">
-                    Upload Course Excel Workbook (.xlsx)
-                  </h2>
-                  <p className="dropzone-sub">
-                    Drag and drop your workbook here or select a file. All data
-                    remains strictly in browser memory.
+            <div className="onboarding-card">
+              <div className="field-group">
+                <label htmlFor="student-name-input" className="field-label">
+                  Student Name <span className="field-required">*</span>
+                </label>
+                <input
+                  id="student-name-input"
+                  type="text"
+                  autoComplete="off"
+                  className="field-input"
+                  placeholder="Enter student full name (e.g. Ananya Sharma)"
+                  value={studentName}
+                  onChange={(e) => setStudentName(e.target.value)}
+                />
+                <p className="field-hint">
+                  Preserved verbatim in PDF headers, toolkit pages, and the
+                  download filename. Kept strictly in memory.
+                </p>
+              </div>
+
+              <div className="field-group">
+                <span className="field-label">
+                  Upload Course Workbook (.xlsx)
+                </span>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  className={`dropzone${isDragging ? ' is-dragging' : ''}`}
+                  onClick={() => excelInputRef.current?.click()}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      excelInputRef.current?.click();
+                    }
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDragging(true);
+                  }}
+                  onDragLeave={() => setIsDragging(false)}
+                  onDrop={handleDrop}
+                >
+                  <div className="dropzone-icon">
+                    <FileSpreadsheet size={20} aria-hidden="true" />
+                  </div>
+                  <p className="dropzone-title">
+                    Drop your Eccho Excel workbook here, or click to browse
                   </p>
+                  <p className="dropzone-meta">
+                    Reads “Course Data” automatically when present. “Comparison”
+                    is never imported as extra courses.
+                  </p>
+                  <span className="btn btn-subtle">
+                    <Upload size={15} aria-hidden="true" />
+                    Select Excel File
+                  </span>
                 </div>
-                <div>
-                  <input
-                    ref={excelInputRef}
-                    id={excelInputId}
-                    type="file"
-                    accept=".xlsx,.xlsm"
-                    className="visually-hidden"
-                    onChange={handleExcelInputChange}
-                  />
-                  <label
-                    htmlFor={excelInputId}
-                    className="btn btn-outline dropzone-trigger"
+              </div>
+
+              <details className="secondary-details">
+                <summary>Optional: Customise Eccho Overseas brand logo</summary>
+                <div className="secondary-details-body">
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={() => brandLogoInputRef.current?.click()}
                   >
-                    <Upload size={16} aria-hidden="true" />
-                    {session ? 'Replace File' : 'Choose Excel File'}
-                  </label>
-                </div>
-              </div>
-
-              {session && (
-                <div className="file-meta-pill">
-                  <span className="file-name-text" title={session.fileName}>
-                    {session.fileName}
-                  </span>
-                  <span className="badge badge-neutral">
-                    {session.sheetNames.length}{' '}
-                    {session.sheetNames.length === 1 ? 'sheet' : 'sheets'}
-                  </span>
-                  {session.autoSelectedCourseData && (
-                    <span className="badge badge-green">
-                      Auto-selected “Course Data”
-                    </span>
-                  )}
-                </div>
-              )}
-
-              {isParsing && (
-                <div className="loading-row" role="status" aria-live="polite">
-                  <progress
-                    aria-label="Parsing Excel workbook"
-                    className="loading-spinner"
-                  />
-                  <span>Parsing workbook in memory…</span>
-                </div>
-              )}
-            </div>
-
-            <div className="config-stack">
-              <div className="field-group">
-                <div className="field-label-row">
-                  <label htmlFor={sheetSelectId} className="field-label">
-                    Worksheet Source
-                  </label>
-                  {session?.autoSelectedCourseData && (
-                    <span className="badge badge-green">Authoritative sheet</span>
-                  )}
-                </div>
-                <select
-                  id={sheetSelectId}
-                  className="select-control"
-                  value={selectedSheet}
-                  onChange={handleSheetChange}
-                  disabled={!session}
-                >
-                  {!session ? (
-                    <option value="">Upload a workbook to select a sheet</option>
-                  ) : (
-                    session.sheetNames.map((name) => (
-                      <option key={name} value={name}>
-                        {name}
-                      </option>
-                    ))
-                  )}
-                </select>
-                <p className="field-hint">
-                  Automatically uses “Course Data” when present; ignores
-                  “Comparison” as extra rows.
-                </p>
-              </div>
-
-              <div className="field-group">
-                <div className="field-label-row">
-                  <label htmlFor={currencySelectId} className="field-label">
-                    Tuition Fee Currency
-                  </label>
-                  {session && selectedCurrency && (
-                    <span className="badge badge-green">
-                      {session.detectedCurrency === selectedCurrency &&
-                      session.currencySource
-                        ? 'Confirmed from workbook'
-                        : 'Confirmed'}
-                    </span>
-                  )}
-                  {currencyRequired && (
-                    <span className="badge badge-warn">Required before export</span>
-                  )}
-                </div>
-                <select
-                  id={currencySelectId}
-                  className={`select-control ${
-                    currencyRequired ? 'select-control-attention' : ''
-                  }`}
-                  value={selectedCurrency}
-                  onChange={(e) =>
-                    setSelectedCurrency(e.target.value as CurrencyCode | '')
-                  }
-                  disabled={!session}
-                >
-                  <option value="">
-                    {session
-                      ? 'Select tuition currency (required)…'
-                      : 'Upload a workbook first'}
-                  </option>
-                  {CURRENCY_OPTIONS.map((opt) => (
-                    <option key={opt.code} value={opt.code}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
-                <p className="field-hint">
-                  {session?.currencySource ??
-                    'Used to display Yearly Tuition Fee without altering scholarship text.'}
-                </p>
-              </div>
-
-              <div className="field-group">
-                <div className="field-label-row">
-                  <span className="field-label">
-                    Eccho Overseas Brand Logo (In-Memory)
-                  </span>
-                </div>
-                <div className="logo-control-row">
-                  <input
-                    ref={logoInputRef}
-                    id={logoInputId}
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp,image/svg+xml"
-                    className="visually-hidden"
-                    onChange={handleLogoChange}
-                  />
-                  <label htmlFor={logoInputId} className="btn btn-outline btn-sm">
-                    <ImagePlus size={15} aria-hidden="true" />
-                    {customLogo ? 'Change Custom Logo' : 'Override Logo'}
-                  </label>
-                  {customLogo ? (
+                    <ImageIcon size={14} aria-hidden="true" />
+                    Upload Replacement Logo
+                  </button>
+                  {customBrandLogo && (
                     <button
                       type="button"
-                      className="btn btn-outline btn-sm"
-                      onClick={handleRestoreDefaultLogo}
+                      className="btn btn-sm"
+                      onClick={() => {
+                        revokeLogoPreviewUrl(customBrandLogo);
+                        setCustomBrandLogo(null);
+                      }}
                     >
-                      <Trash2 size={15} aria-hidden="true" />
-                      Restore Default ({customLogo.fileName})
+                      Restore Default Logo
                     </button>
-                  ) : (
-                    <span className="field-hint">
-                      Using official Eccho Overseas green logo.
-                    </span>
                   )}
                 </div>
-              </div>
+              </details>
             </div>
-          </div>
-        </section>
-
-        <details className="checklist-details">
-          <summary className="checklist-summary">
-            <span className="checklist-summary-title">
-              <ChevronRight
-                size={18}
-                className="checklist-chevron"
-                aria-hidden="true"
-              />
-              Pre-Export Required Documents Checklist ({checkedCount} of{' '}
-              {TOTAL_CHECKLIST_ITEMS} ticked)
-            </span>
-            <span className="badge badge-green">
-              Carried into interactive PDF checkboxes
-            </span>
-          </summary>
-
-          <div className="checklist-body">
-            <div className="checklist-top-bar">
-              <p className="checklist-instruction">
-                {CHECKLIST_READER_INSTRUCTION} Any items ticked below are
-                pre-checked in the generated PDF; no sensitive document numbers or
-                files are collected. (Guidance checked on {GUIDANCE_CHECKED_DATE})
-              </p>
-              {checkedCount > 0 && (
-                <button
-                  type="button"
-                  className="btn btn-outline btn-sm"
-                  onClick={() => setChecklistSelections({})}
-                >
-                  Clear Checklist Selections
-                </button>
-              )}
-            </div>
-
-            <div className="checklist-groups-grid">
-              {DOCUMENT_CHECKLIST_GROUPS.map((group) => (
-                <section
-                  key={group.id}
-                  className="checklist-group-card"
-                  aria-label={group.title}
-                >
-                  <h3 className="checklist-group-title">{group.title}</h3>
-                  <p className="checklist-group-note">{group.circumstanceNote}</p>
-                  <ul className="checklist-items-list">
-                    {group.items.map((item) => {
-                      const isChecked = Boolean(
-                        checklistSelections[item.fieldName],
-                      );
-                      const isGeneral = item.status === 'Generally required';
-                      return (
-                        <li key={item.fieldName}>
-                          <label className="checklist-item-label">
-                            <input
-                              type="checkbox"
-                              className="checklist-item-checkbox"
-                              checked={isChecked}
-                              onChange={() =>
-                                handleToggleChecklistItem(item.fieldName)
-                              }
-                            />
-                            <span className="checklist-item-text">
-                              <span className="checklist-item-header">
-                                <span className="checklist-item-name">
-                                  {item.label}
-                                </span>
-                                <span
-                                  className={`badge ${
-                                    isGeneral ? 'badge-green' : 'badge-neutral'
-                                  }`}
-                                >
-                                  {item.status}
-                                </span>
-                              </span>
-                              <span className="checklist-item-note">
-                                {item.note}
-                              </span>
-                            </span>
-                          </label>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </section>
-              ))}
-            </div>
-          </div>
-        </details>
-
-        {logoError && (
-          <div role="alert" className="alert-banner alert-error">
-            <AlertCircle size={18} aria-hidden="true" />
-            <div className="alert-content">
-              <p className="alert-title">Logo upload error</p>
-              <p className="alert-detail">{logoError}</p>
-            </div>
-          </div>
-        )}
-
-        {parseError && (
-          <div role="alert" className="alert-banner alert-error">
-            <AlertCircle size={18} aria-hidden="true" />
-            <div className="alert-content">
-              <p className="alert-title">Workbook validation failed</p>
-              <p className="alert-detail">{parseError}</p>
-            </div>
-          </div>
-        )}
-
-        {studentNameRequiredWarning && !parseError && (
-          <div role="status" aria-live="polite" className="alert-banner alert-warn">
-            <AlertCircle size={18} aria-hidden="true" />
-            <div className="alert-content">
-              <p className="alert-title">Student Name required</p>
-              <p className="alert-detail">
-                Enter the Student Name above to personalize the PDF headers, UK
-                application guide, interactive checklist, and download filename.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {currencyRequired && !parseError && (
-          <div role="status" aria-live="polite" className="alert-banner alert-warn">
-            <AlertCircle size={18} aria-hidden="true" />
-            <div className="alert-content">
-              <p className="alert-title">Currency selection required</p>
-              <p className="alert-detail">
-                This workbook does not explicitly identify a fee currency. Select
-                a Tuition Fee Currency above to generate and download the PDF.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {fitError && (
-          <div role="alert" className="alert-banner alert-error">
-            <AlertCircle size={18} aria-hidden="true" />
-            <div className="alert-content">
-              <p className="alert-title">
-                Page-fit verification failed — PDF download blocked
-              </p>
-              <p className="alert-detail">{fitError}</p>
-            </div>
-          </div>
-        )}
-
-        {session && courses.length > 0 && !parseError && (
-          <div className="status-strip" role="status" aria-live="polite">
-            <div className="status-metrics">
-              <span className="metric-item">
-                <CheckCircle2 size={16} color="#3d8a3a" aria-hidden="true" />
-                <span>
-                  Imported courses:{' '}
-                  <strong className="metric-value">{courses.length}</strong>
-                </span>
-              </span>
-              <span className="metric-item">
-                PDF Structure:{' '}
-                <strong className="metric-value">
-                  {pdfPlan
-                    ? `${pdfPlan.coursePageCount} course pages + UK Guide & Checklist (${pdfPlan.pageCount} pages total)`
-                    : `${courses.length} courses (1 course/page) + UK Guide & Checklist`}
-                </strong>
-              </span>
-              {selectedCurrency && (
-                <span className="metric-item">
-                  Currency:{' '}
-                  <strong className="metric-value">{selectedCurrency}</strong>
-                </span>
-              )}
-              {trimmedStudentName && (
-                <span className="metric-item">
-                  Student:{' '}
-                  <strong className="metric-value">{trimmedStudentName}</strong>
-                </span>
-              )}
-            </div>
-
-            {isGeneratingPdf && (
-              <div className="loading-row">
-                <progress
-                  aria-label="Building A4 PDF preview"
-                  className="loading-spinner"
-                />
-                <span>Validating fit &amp; generating PDF…</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {courses.length > 0 && !parseError ? (
-          <div className="workspace-grid">
-            <aside className="course-sidebar" aria-label="PDF document navigation">
-              <div className="sidebar-header">
-                <h2 className="sidebar-title">
-                  Courses ({courses.length})
-                </h2>
-                <span className="badge badge-green">Source Order</span>
-              </div>
-              <ol className="course-list">
-                {courses.map((course, idx) => {
-                  const targetPage = idx + 1;
-                  const isActive = activePageNumber === targetPage;
-                  const feeLabel = selectedCurrency
-                    ? formatTuitionFee(course.yearlyTuitionFee, selectedCurrency)
-                    : 'Select currency';
-                  return (
-                    <li key={`${course.rowNumber}-${course.programName}`}>
-                      <button
-                        type="button"
-                        className={`course-nav-item ${
-                          isActive ? 'course-nav-item-active' : ''
-                        }`}
-                        aria-current={isActive ? 'page' : undefined}
-                        onClick={() => setActivePageNumber(targetPage)}
-                      >
-                        <span className="course-index-pill">{targetPage}</span>
-                        <span className="course-nav-copy">
-                          <span className="course-nav-program">
-                            {course.programName}
-                          </span>
-                          <span className="course-nav-uni">
-                            {course.university}
-                          </span>
-                          <span className="course-nav-fee">{feeLabel}</span>
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ol>
-
-              {pdfPlan && (
-                <>
-                  <div className="sidebar-section-divider">
-                    Guidance &amp; Checklist
-                  </div>
-                  <ul className="guide-nav-list">
-                    <li>
-                      <button
-                        type="button"
-                        className={`course-nav-item ${
-                          activePageNumber >= pdfPlan.guideStartPage &&
-                          activePageNumber < pdfPlan.checklistStartPage
-                            ? 'course-nav-item-active'
-                            : ''
-                        }`}
-                        onClick={() =>
-                          setActivePageNumber(pdfPlan.guideStartPage)
-                        }
-                      >
-                        <span className="course-index-pill" aria-hidden="true">
-                          <BookOpenCheck size={13} />
-                        </span>
-                        <span className="course-nav-copy">
-                          <span className="course-nav-program">
-                            UK Application Process
-                          </span>
-                          <span className="course-nav-uni">
-                            Page {pdfPlan.guideStartPage} · Admissions vs UKVI
-                          </span>
-                        </span>
-                      </button>
-                    </li>
-                    <li>
-                      <button
-                        type="button"
-                        className={`course-nav-item ${
-                          activePageNumber >= pdfPlan.checklistStartPage
-                            ? 'course-nav-item-active'
-                            : ''
-                        }`}
-                        onClick={() =>
-                          setActivePageNumber(pdfPlan.checklistStartPage)
-                        }
-                      >
-                        <span className="course-index-pill" aria-hidden="true">
-                          <CheckSquare size={13} />
-                        </span>
-                        <span className="course-nav-copy">
-                          <span className="course-nav-program">
-                            Required Documents Checklist
-                          </span>
-                          <span className="course-nav-uni">
-                            Page {pdfPlan.checklistStartPage} · Interactive PDF
-                            boxes
-                          </span>
-                        </span>
-                      </button>
-                    </li>
-                  </ul>
-                </>
-              )}
-            </aside>
-
-            <section className="preview-panel" aria-label="PDF page preview">
-              <div className="preview-toolbar">
-                <div className="preview-heading-block">
-                  <h2 className="preview-title">{currentSectionTitle}</h2>
-                  <p className="preview-caption">
-                    Rendered directly from the generated A4 PDF — click links on
-                    the page to jump between sections
-                  </p>
-                </div>
-
-                <div className="preview-nav-controls">
-                  <button
-                    type="button"
-                    className="btn btn-outline btn-sm"
-                    onClick={() =>
-                      setActivePageNumber((prev) => Math.max(1, prev - 1))
-                    }
-                    disabled={activePageNumber <= 1}
-                  >
-                    <ChevronLeft size={16} aria-hidden="true" />
-                    Previous
-                  </button>
-                  <span className="page-counter">
-                    Page {activePageNumber} of {totalPreviewPages}
-                  </span>
-                  <button
-                    type="button"
-                    className="btn btn-outline btn-sm"
-                    onClick={() =>
-                      setActivePageNumber((prev) =>
-                        Math.min(totalPreviewPages, prev + 1),
-                      )
-                    }
-                    disabled={activePageNumber >= totalPreviewPages}
-                  >
-                    Next
-                    <ChevronRight size={16} aria-hidden="true" />
-                  </button>
-                </div>
-              </div>
-
-              <div className="preview-stage-wrap">
-                {pdfBytes ? (
-                  <PdfPreviewCanvas
-                    pdfBytes={pdfBytes}
-                    pageNumber={activePageNumber}
-                    pageTitle={currentSectionTitle}
-                    onNavigatePage={(targetPage) =>
-                      setActivePageNumber(
-                        Math.min(Math.max(1, targetPage), totalPreviewPages),
-                      )
-                    }
+          </section>
+        ) : (
+          <>
+            <div className="workspace-toolbar">
+              <div className="toolbar-fields">
+                <div className="toolbar-field student-name-field">
+                  <label htmlFor="workspace-student-name" className="toolbar-label">
+                    Student Name *
+                  </label>
+                  <input
+                    id="workspace-student-name"
+                    type="text"
+                    autoComplete="off"
+                    className="field-input"
+                    placeholder="Enter student name"
+                    value={studentName}
+                    onChange={(e) => setStudentName(e.target.value)}
                   />
-                ) : isGeneratingPdf ? (
-                  <div className="loading-row" role="status" aria-live="polite">
-                    <progress
-                      aria-label="Generating PDF preview"
-                      className="loading-spinner"
-                    />
-                    <span>Measuring layout and building PDF pages…</span>
+                </div>
+
+                {workbookSession?.detectedCurrency ? (
+                  <div className="toolbar-field">
+                    <span className="toolbar-label">Currency</span>
+                    <span className="currency-pill">
+                      <Coins size={14} aria-hidden="true" />
+                      {currencyLabel}
+                    </span>
                   </div>
                 ) : (
-                  <div className="empty-state">
-                    <h3 className="empty-state-title">
-                      {!trimmedStudentName
-                        ? 'Enter Student Name to generate the personalized PDF'
-                        : currencyRequired
-                          ? 'Select a currency to render the PDF preview'
-                          : 'PDF preview unavailable'}
-                    </h3>
-                    <p className="empty-state-body">
-                      {fitError
-                        ? 'Resolve the single-page fit issue reported above to preview and export.'
-                        : !trimmedStudentName
-                          ? 'Fill in the required Student Name field above to personalize every page and enable PDF preview and download.'
-                          : 'Choose the confirmed tuition currency above to generate and inspect every A4 page.'}
-                    </p>
+                  <div className="toolbar-field">
+                    <label htmlFor="currency-select" className="toolbar-label">
+                      Confirm Fee Currency
+                    </label>
+                    <select
+                      id="currency-select"
+                      className="field-select"
+                      value={selectedCurrency}
+                      onChange={(e) =>
+                        setSelectedCurrency(e.target.value as CurrencyCode)
+                      }
+                    >
+                      {CURRENCY_OPTIONS.map((opt) => (
+                        <option key={opt.code} value={opt.code}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {workbookSession && workbookSession.sheetNames.length > 1 && (
+                  <div className="toolbar-field">
+                    <label htmlFor="sheet-select" className="toolbar-label">
+                      Worksheet
+                    </label>
+                    <select
+                      id="sheet-select"
+                      className="field-select"
+                      value={selectedSheet}
+                      onChange={(e) => {
+                        if (workbookSession) {
+                          void applyWorksheet(workbookSession, e.target.value);
+                        }
+                      }}
+                    >
+                      {workbookSession.sheetNames.map((name) => (
+                        <option key={name} value={name}>
+                          {name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 )}
               </div>
-            </section>
-          </div>
-        ) : (
-          !isParsing &&
-          !parseError && (
-            <section className="empty-state" aria-label="Getting started">
-              <h2 className="empty-state-title">
-                Ready to build a personalized Eccho Overseas shortlist PDF
-              </h2>
-              <p className="empty-state-body">
-                Enter the student’s name and upload an Excel workbook (.xlsx).
-                Each course from “Course Data” becomes one A4 portrait page,
-                followed by the clickable UK Application Process guide and
-                interactive Required Documents Checklist.
-              </p>
-            </section>
-          )
+
+              <div className="view-tabs" role="tablist" aria-label="Preview mode">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={viewMode === 'structured'}
+                  className={`view-tab${viewMode === 'structured' ? ' is-active' : ''}`}
+                  onClick={() => setViewMode('structured')}
+                >
+                  Shortlist Preview
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={viewMode === 'pdf'}
+                  className={`view-tab${viewMode === 'pdf' ? ' is-active' : ''}`}
+                  onClick={() => setViewMode('pdf')}
+                >
+                  Rendered PDF{pdfMeta ? ` (${pdfMeta.pageCount}p)` : ''}
+                </button>
+              </div>
+            </div>
+
+            {!trimmedStudentName && (
+              <div className="notice-banner notice-warning">
+                <AlertCircle size={18} aria-hidden="true" />
+                <span>
+                  Enter <strong>Student Name</strong> above to unlock live PDF
+                  preview and download.
+                </span>
+              </div>
+            )}
+
+            <div className="workspace-grid">
+              <aside className="sidebar" aria-label="Shortlist navigation">
+                <div className="sidebar-card">
+                  <div className="sidebar-card-header">
+                    <h2 className="sidebar-card-title">Shortlist Structure</h2>
+                    <span className="nav-page-tag">
+                      {courses.length} {courses.length === 1 ? 'course' : 'courses'}
+                    </span>
+                  </div>
+                  <div className="nav-list">
+                    <button
+                      type="button"
+                      className={`nav-item${activeSection.kind === 'summary' ? ' is-active' : ''}`}
+                      onClick={() => navigateToSection({ kind: 'summary' })}
+                    >
+                      <span className="nav-index">
+                        <Landmark size={13} aria-hidden="true" />
+                      </span>
+                      <span className="nav-item-text">
+                        <span className="nav-item-primary">
+                          Personalised Summary
+                        </span>
+                        <span className="nav-item-secondary">
+                          {courses.length} courses · {uniqueUniversities.length}{' '}
+                          universities
+                        </span>
+                      </span>
+                      <span className="nav-page-tag">
+                        {summaryPageCount === 1
+                          ? 'p.1'
+                          : `p.1–${summaryPageCount}`}
+                      </span>
+                    </button>
+
+                    {courses.map((course, idx) => (
+                      <button
+                        key={`${course.rowNumber}-${course.programName}`}
+                        type="button"
+                        className={`nav-item${
+                          activeSection.kind === 'course' &&
+                          activeSection.index === idx
+                            ? ' is-active'
+                            : ''
+                        }`}
+                        onClick={() =>
+                          navigateToSection({ kind: 'course', index: idx })
+                        }
+                      >
+                        <span className="nav-index">
+                          {String(idx + 1).padStart(2, '0')}
+                        </span>
+                        <span className="nav-item-text">
+                          <span className="nav-item-primary">
+                            {course.programName}
+                          </span>
+                          <span className="nav-item-secondary">
+                            {course.university}
+                          </span>
+                        </span>
+                        <span className="nav-page-tag">
+                          p.{courseStartPage + idx}
+                        </span>
+                      </button>
+                    ))}
+
+                    <button
+                      type="button"
+                      className={`nav-item${activeSection.kind === 'guide' ? ' is-active' : ''}`}
+                      onClick={() => navigateToSection({ kind: 'guide' })}
+                    >
+                      <span className="nav-index">
+                        <FileText size={13} aria-hidden="true" />
+                      </span>
+                      <span className="nav-item-text">
+                        <span className="nav-item-primary">
+                          UK Application Process
+                        </span>
+                        <span className="nav-item-secondary">
+                          6-step guide &amp; official sources
+                        </span>
+                      </span>
+                      <span className="nav-page-tag">p.{guideStartPage}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      className={`nav-item${activeSection.kind === 'checklist' ? ' is-active' : ''}`}
+                      onClick={() => navigateToSection({ kind: 'checklist' })}
+                    >
+                      <span className="nav-index">
+                        <CheckSquare size={13} aria-hidden="true" />
+                      </span>
+                      <span className="nav-item-text">
+                        <span className="nav-item-primary">
+                          Required Documents Checklist
+                        </span>
+                        <span className="nav-item-secondary">
+                          {tickedChecklistCount}/{totalChecklistCount} ticked
+                        </span>
+                      </span>
+                      <span className="nav-page-tag">
+                        p.{checklistStartPage}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="sidebar-card">
+                  <div className="sidebar-card-header">
+                    <h2 className="sidebar-card-title">University Logos</h2>
+                    <span className="nav-page-tag">
+                      {uniqueUniversities.length} unique
+                    </span>
+                  </div>
+                  <div className="logo-manager-list">
+                    {uniqueUniversities.map((course) => {
+                      const entry = universityLogos[course.universityKey];
+                      const isLookingUp =
+                        lookingUpUnivKey === course.universityKey;
+                      const isCustom =
+                        entry?.source === 'uploaded' ||
+                        entry?.source === 'fetched';
+
+                      return (
+                        <div
+                          key={course.universityKey}
+                          className="logo-manager-row"
+                        >
+                          <div className="logo-manager-head">
+                            <UniversityLogoBox
+                              entry={entry}
+                              universityName={course.university}
+                            />
+                            <div className="logo-manager-meta">
+                              <span className="logo-manager-name">
+                                {course.university}
+                              </span>
+                              <span className="logo-manager-status">
+                                {entry?.source === 'packaged'
+                                  ? 'Official logo packaged'
+                                  : entry?.source === 'uploaded'
+                                    ? 'Custom uploaded logo'
+                                    : entry?.source === 'fetched'
+                                      ? 'Fetched website logo'
+                                      : 'Initials placeholder'}
+                              </span>
+                            </div>
+                          </div>
+
+                          <input
+                            ref={(el) => {
+                              univLogoInputRefs.current[course.universityKey] =
+                                el;
+                            }}
+                            type="file"
+                            accept=".png,.jpg,.jpeg,.svg,image/png,image/jpeg,image/svg+xml"
+                            className="visually-hidden"
+                            onChange={(e) =>
+                              void handleUniversityLogoUpload(course, e)
+                            }
+                          />
+
+                          <div className="logo-manager-actions">
+                            <button
+                              type="button"
+                              className="btn btn-sm"
+                              onClick={() =>
+                                univLogoInputRefs.current[
+                                  course.universityKey
+                                ]?.click()
+                              }
+                            >
+                              <Upload size={12} aria-hidden="true" />
+                              {entry?.logo ? 'Replace' : 'Upload Logo'}
+                            </button>
+
+                            {course.websiteHref && (
+                              <button
+                                type="button"
+                                className="btn btn-sm"
+                                disabled={isLookingUp}
+                                onClick={() =>
+                                  void handleTryWebsiteLookup(course)
+                                }
+                              >
+                                {isLookingUp ? (
+                                  <Loader2
+                                    size={12}
+                                    className="spin-icon"
+                                    aria-hidden="true"
+                                  />
+                                ) : (
+                                  <Globe size={12} aria-hidden="true" />
+                                )}
+                                Fetch Website
+                              </button>
+                            )}
+
+                            {isCustom && (
+                              <button
+                                type="button"
+                                className="btn btn-sm"
+                                onClick={() =>
+                                  void handleRestoreUniversityLogo(course)
+                                }
+                              >
+                                <RefreshCw size={12} aria-hidden="true" />
+                                Restore
+                              </button>
+                            )}
+                          </div>
+
+                          {entry?.lookupNote && entry.source !== 'packaged' && (
+                            <p className="logo-lookup-note">
+                              {entry.lookupNote}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </aside>
+
+              <section className="preview-stage" aria-label="Document preview">
+                {viewMode === 'pdf' ? (
+                  <>
+                    <div className="pdf-preview-bar">
+                      <div className="header-actions">
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          disabled={!pdfMeta || activePdfPage <= 1}
+                          onClick={() =>
+                            handlePdfPageNavigation(
+                              Math.max(1, activePdfPage - 1),
+                            )
+                          }
+                        >
+                          <ChevronLeft size={14} aria-hidden="true" />
+                          Previous
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          disabled={
+                            !pdfMeta || activePdfPage >= pdfMeta.pageCount
+                          }
+                          onClick={() =>
+                            handlePdfPageNavigation(
+                              Math.min(
+                                pdfMeta?.pageCount ?? 1,
+                                activePdfPage + 1,
+                              ),
+                            )
+                          }
+                        >
+                          Next
+                          <ChevronRight size={14} aria-hidden="true" />
+                        </button>
+                      </div>
+                      <span className="brand-subtitle">
+                        {pdfMeta
+                          ? `Page ${activePdfPage} of ${pdfMeta.pageCount} — ${activePageTitle}`
+                          : 'Enter Student Name to preview rendered PDF'}
+                      </span>
+                    </div>
+
+                    <div className="pdf-preview-body">
+                      {!trimmedStudentName ? (
+                        <div className="pdf-preview-loading">
+                          Enter Student Name above to render the personalised
+                          PDF preview.
+                        </div>
+                      ) : isGeneratingPdf && !pdfMeta ? (
+                        <div className="pdf-preview-loading">
+                          Generating personalised A4 PDF…
+                        </div>
+                      ) : pdfMeta ? (
+                        <PdfPreviewCanvas
+                          pdfBytes={pdfMeta.pdfBytes}
+                          pageNumber={activePdfPage}
+                          pageTitle={activePageTitle}
+                          onNavigatePage={handlePdfPageNavigation}
+                        />
+                      ) : (
+                        <div className="pdf-preview-error">
+                          PDF preview unavailable until generation succeeds.
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : activeSection.kind === 'summary' ? (
+                  <article className="sheet-document">
+                    <div className="sheet-topbar">
+                      <div className="sheet-topbar-left">
+                        {effectiveBrandLogoSrc && (
+                          <img
+                            src={effectiveBrandLogoSrc}
+                            alt={BRAND_CONFIG.brandName}
+                            className="sheet-topbar-logo"
+                          />
+                        )}
+                      </div>
+                      <span className="sheet-topbar-kicker">
+                        Personalised Course Shortlist
+                      </span>
+                    </div>
+
+                    <div className="summary-hero">
+                      <h1>Your Personalised Course Shortlist</h1>
+                      <p className="summary-subtitle">
+                        Prepared for{' '}
+                        {trimmedStudentName || '[Enter Student Name]'}
+                      </p>
+
+                      <div className="stats-strip">
+                        <span className="stat-chip">
+                          <GraduationCap size={16} aria-hidden="true" />
+                          {courses.length}{' '}
+                          {courses.length === 1 ? 'course' : 'courses'}
+                        </span>
+                        <span className="stat-sep" aria-hidden="true" />
+                        <span className="stat-chip">
+                          <Landmark size={16} aria-hidden="true" />
+                          {uniqueUniversities.length}{' '}
+                          {uniqueUniversities.length === 1
+                            ? 'university'
+                            : 'universities'}
+                        </span>
+                        <span className="stat-sep" aria-hidden="true" />
+                        <span className="stat-chip">
+                          <MapPin size={16} aria-hidden="true" />
+                          {destinationLabel}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="summary-rows">
+                      {courses.map((course, idx) => (
+                        <div
+                          key={`${course.rowNumber}-${course.programName}`}
+                          className="summary-row"
+                        >
+                          <UniversityLogoBox
+                            entry={universityLogos[course.universityKey]}
+                            universityName={course.university}
+                          />
+                          <div className="summary-row-title">
+                            <div className="summary-univ">
+                              {course.university}
+                            </div>
+                            <div className="summary-course">
+                              {course.programName}
+                            </div>
+                          </div>
+                          <div className="summary-location">
+                            <MapPin size={14} aria-hidden="true" />
+                            <span>
+                              {course.campus !== NOT_SPECIFIED
+                                ? course.campus
+                                : course.country}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            onClick={() =>
+                              navigateToSection({ kind: 'course', index: idx })
+                            }
+                          >
+                            View course
+                            <ArrowRight size={14} aria-hidden="true" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="toolkit-section">
+                      <h2 className="toolkit-heading">
+                        Your Application Toolkit
+                      </h2>
+                      <button
+                        type="button"
+                        className="toolkit-row"
+                        onClick={() => navigateToSection({ kind: 'guide' })}
+                      >
+                        <span className="toolkit-row-left">
+                          <FileText size={16} aria-hidden="true" />
+                          <strong>UK Application Process</strong>
+                          <span className="toolkit-row-sub">
+                            — 6-step admissions &amp; Student visa guide
+                          </span>
+                        </span>
+                        <ArrowRight size={16} aria-hidden="true" />
+                      </button>
+
+                      <button
+                        type="button"
+                        className="toolkit-row"
+                        onClick={() => navigateToSection({ kind: 'checklist' })}
+                      >
+                        <span className="toolkit-row-left">
+                          <CheckSquare size={16} aria-hidden="true" />
+                          <strong>Required Documents Checklist</strong>
+                          <span className="toolkit-row-sub">
+                            — Interactive checklist to tick and save
+                          </span>
+                        </span>
+                        <ArrowRight size={16} aria-hidden="true" />
+                      </button>
+                    </div>
+                  </article>
+                ) : activeSection.kind === 'course' && activeCourse ? (
+                  <article className="sheet-document">
+                    <div className="sheet-topbar">
+                      <div className="sheet-topbar-left">
+                        {effectiveBrandLogoSrc && (
+                          <img
+                            src={effectiveBrandLogoSrc}
+                            alt={BRAND_CONFIG.brandName}
+                            className="sheet-topbar-logo"
+                          />
+                        )}
+                        <span className="sheet-topbar-prepared">
+                          Prepared for{' '}
+                          {trimmedStudentName || '[Student Name]'}
+                        </span>
+                      </div>
+                      <span className="sheet-topbar-kicker">
+                        Course {String(activeSection.index + 1).padStart(2, '0')}{' '}
+                        / {String(courses.length).padStart(2, '0')}
+                      </span>
+                    </div>
+
+                    <div className="sheet-back-strip">
+                      <button
+                        type="button"
+                        className="link-back-btn"
+                        onClick={() => navigateToSection({ kind: 'summary' })}
+                      >
+                        <ArrowLeft size={14} aria-hidden="true" />
+                        Back to shortlist
+                      </button>
+                      {pdfMeta && (
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-subtle"
+                          onClick={() => setViewMode('pdf')}
+                        >
+                          <Eye size={13} aria-hidden="true" />
+                          Inspect PDF Page {courseStartPage + activeSection.index}
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="course-header-identity">
+                      <UniversityLogoBox
+                        entry={universityLogos[activeCourse.universityKey]}
+                        universityName={activeCourse.university}
+                      />
+                      <div>
+                        <p className="course-univ-name">
+                          {activeCourse.university}
+                        </p>
+                        <div className="course-location-line">
+                          <MapPin size={14} aria-hidden="true" />
+                          <span>
+                            {activeCourse.campus !== NOT_SPECIFIED &&
+                            activeCourse.country !== NOT_SPECIFIED
+                              ? `${activeCourse.campus} / ${activeCourse.country}`
+                              : activeCourse.campus !== NOT_SPECIFIED
+                                ? activeCourse.campus
+                                : activeCourse.country}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <h1 className="course-title">{activeCourse.programName}</h1>
+
+                    <section className="doc-section">
+                      <h2 className="doc-section-title">Overview</h2>
+                      <div className="overview-grid">
+                        <div className="overview-item">
+                          <GraduationCap size={17} aria-hidden="true" />
+                          <div>
+                            <div className="overview-label">Study level</div>
+                            <div className="overview-value">
+                              {activeCourse.studyLevel}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="overview-item">
+                          <Clock size={17} aria-hidden="true" />
+                          <div>
+                            <div className="overview-label">Duration</div>
+                            <div className="overview-value">
+                              {activeCourse.duration}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="overview-item">
+                          <Calendar size={17} aria-hidden="true" />
+                          <div>
+                            <div className="overview-label">Open intake</div>
+                            <div className="overview-value">
+                              {activeCourse.openIntake}
+                            </div>
+                          </div>
+                        </div>
+
+                        {activeCourse.faculty !== null && (
+                          <div className="overview-item">
+                            <Building2 size={17} aria-hidden="true" />
+                            <div>
+                              <div className="overview-label">Faculty</div>
+                              <div className="overview-value">
+                                {activeCourse.faculty}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </section>
+
+                    <section className="doc-section">
+                      <h2 className="doc-section-title">Fees</h2>
+                      <div className="fees-grid">
+                        <div className="sage-panel">
+                          <Coins size={18} aria-hidden="true" />
+                          <div>
+                            <div className="overview-label">
+                              Yearly tuition fee
+                            </div>
+                            <div
+                              className={
+                                activeCourse.yearlyTuitionFee.kind === 'text'
+                                  ? 'fee-text'
+                                  : 'fee-amount'
+                              }
+                            >
+                              {formatTuitionFee(
+                                activeCourse.yearlyTuitionFee,
+                                activeCurrency,
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="sage-panel">
+                          <Award size={18} aria-hidden="true" />
+                          <div>
+                            <div className="overview-label">
+                              Scholarship available
+                            </div>
+                            <div className="fee-text">
+                              {activeCourse.scholarshipAvailable}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </section>
+
+                    <section className="doc-section">
+                      <h2 className="doc-section-title">
+                        Academic entry requirements
+                      </h2>
+                      <div className="academic-table">
+                        {(activeCourse.entryRequirementLines.length > 0
+                          ? activeCourse.entryRequirementLines
+                          : [NOT_SPECIFIED]
+                        ).map((line, idx) => {
+                          const split = splitAcademicDisplayLine(line);
+                          return (
+                            <div key={idx} className="academic-row">
+                              {split ? (
+                                <>
+                                  <span className="academic-label">
+                                    {split.label}
+                                  </span>
+                                  <span className="academic-value">
+                                    {split.value}
+                                  </span>
+                                </>
+                              ) : (
+                                <span className="academic-label">{line}</span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+
+                    <section className="doc-section">
+                      <h2 className="doc-section-title">
+                        English language requirements
+                      </h2>
+                      <div className="english-grid">
+                        {activeCourse.englishTests.map((test) => {
+                          const isMissing = test.value === NOT_SPECIFIED;
+                          return (
+                            <div key={test.key} className="english-cell">
+                              <div className="english-test-label">
+                                {test.label}
+                              </div>
+                              <div
+                                className={`english-test-value${
+                                  isMissing ? ' is-missing' : ''
+                                }`}
+                              >
+                                {test.value}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+
+                    <section className="doc-section">
+                      <h2 className="doc-section-title">Waiver criteria</h2>
+                      <div className="waiver-grid">
+                        {activeCourse.englishWaivers.map((waiver) => {
+                          const isMissing = waiver.value === NOT_SPECIFIED;
+                          return (
+                            <div key={waiver.key} className="waiver-cell">
+                              <div className="english-test-label">
+                                {waiver.label}
+                              </div>
+                              <div
+                                className={`english-test-value${
+                                  isMissing ? ' is-missing' : ''
+                                }`}
+                              >
+                                {waiver.value}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+
+                    <div className="quick-toolkit-pair">
+                      <button
+                        type="button"
+                        className="toolkit-row"
+                        onClick={() => navigateToSection({ kind: 'guide' })}
+                      >
+                        <span className="toolkit-row-left">
+                          <FileText size={15} aria-hidden="true" />
+                          <strong>UK Application Process</strong>
+                        </span>
+                        <ArrowRight size={15} aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        className="toolkit-row"
+                        onClick={() => navigateToSection({ kind: 'checklist' })}
+                      >
+                        <span className="toolkit-row-left">
+                          <CheckSquare size={15} aria-hidden="true" />
+                          <strong>Documents Checklist</strong>
+                        </span>
+                        <ArrowRight size={15} aria-hidden="true" />
+                      </button>
+                    </div>
+
+                    <footer className="sheet-footer">
+                      {activeCourse.websiteHref ? (
+                        <a
+                          href={activeCourse.websiteHref}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="sheet-website-link"
+                        >
+                          {activeCourse.websiteUrlDisplay.replace(
+                            /^https?:\/\//i,
+                            '',
+                          )}
+                          <ExternalLink size={13} aria-hidden="true" />
+                        </a>
+                      ) : (
+                        <span>Website not specified</span>
+                      )}
+                      <span>
+                        Fees, scholarships and entry requirements are subject to
+                        change. Confirm with the university.
+                      </span>
+                    </footer>
+                  </article>
+                ) : activeSection.kind === 'guide' ? (
+                  <article className="sheet-document">
+                    <div className="sheet-topbar">
+                      <div className="sheet-topbar-left">
+                        {effectiveBrandLogoSrc && (
+                          <img
+                            src={effectiveBrandLogoSrc}
+                            alt={BRAND_CONFIG.brandName}
+                            className="sheet-topbar-logo"
+                          />
+                        )}
+                        <span className="sheet-topbar-prepared">
+                          Prepared for{' '}
+                          {trimmedStudentName || '[Student Name]'}
+                        </span>
+                      </div>
+                      <span className="sheet-topbar-kicker">
+                        UK Application Process
+                      </span>
+                    </div>
+
+                    <div className="sheet-back-strip">
+                      <button
+                        type="button"
+                        className="link-back-btn"
+                        onClick={() => navigateToSection({ kind: 'summary' })}
+                      >
+                        <ArrowLeft size={14} aria-hidden="true" />
+                        Back to shortlist
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-subtle"
+                        onClick={() => navigateToSection({ kind: 'checklist' })}
+                      >
+                        Required Documents Checklist
+                        <ArrowRight size={14} aria-hidden="true" />
+                      </button>
+                    </div>
+
+                    <h1 className="course-title">UK Application Process</h1>
+                    <p className="summary-subtitle">
+                      University admission rules are set by each institution and
+                      differ from UKVI Student visa requirements.
+                    </p>
+
+                    <div className="guide-step-list">
+                      {UK_APPLICATION_STEPS.map((step) => (
+                        <div key={step.number} className="guide-step-card">
+                          <div className="guide-step-top">
+                            <div className="guide-step-title-wrap">
+                              <span className="step-badge">
+                                {String(step.number).padStart(2, '0')}
+                              </span>
+                              <strong>{step.title}</strong>
+                            </div>
+                            <span
+                              className={`guide-cat-tag${
+                                step.scope === 'UK Student Visa (UKVI)'
+                                  ? ' is-visa'
+                                  : ''
+                              }`}
+                            >
+                              {step.scope}
+                            </span>
+                          </div>
+                          <p>{step.summary}</p>
+                          <ul>
+                            {step.details.map((bullet, idx) => (
+                              <li key={idx}>{bullet}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="official-links-box">
+                      <div className="guide-step-top">
+                        <strong>Official UK Guidance Sources</strong>
+                        <span className="field-hint">
+                          Guidance checked on {GUIDANCE_CHECKED_DATE}
+                        </span>
+                      </div>
+                      <div className="official-links-list">
+                        {OFFICIAL_GUIDANCE_LINKS.map((link) => (
+                          <div key={link.url} className="official-link-row">
+                            <span>{link.label}</span>
+                            <a
+                              href={link.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="sheet-website-link"
+                            >
+                              {link.url}
+                              <ExternalLink size={12} aria-hidden="true" />
+                            </a>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </article>
+                ) : (
+                  <article className="sheet-document">
+                    <div className="sheet-topbar">
+                      <div className="sheet-topbar-left">
+                        {effectiveBrandLogoSrc && (
+                          <img
+                            src={effectiveBrandLogoSrc}
+                            alt={BRAND_CONFIG.brandName}
+                            className="sheet-topbar-logo"
+                          />
+                        )}
+                        <span className="sheet-topbar-prepared">
+                          Prepared for{' '}
+                          {trimmedStudentName || '[Student Name]'}
+                        </span>
+                      </div>
+                      <span className="sheet-topbar-kicker">
+                        Required Documents Checklist
+                      </span>
+                    </div>
+
+                    <div className="sheet-back-strip">
+                      <button
+                        type="button"
+                        className="link-back-btn"
+                        onClick={() => navigateToSection({ kind: 'summary' })}
+                      >
+                        <ArrowLeft size={14} aria-hidden="true" />
+                        Back to shortlist
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-subtle"
+                        onClick={() => navigateToSection({ kind: 'guide' })}
+                      >
+                        UK Application Process
+                        <ArrowRight size={14} aria-hidden="true" />
+                      </button>
+                    </div>
+
+                    <h1 className="course-title">
+                      Required Documents Checklist
+                    </h1>
+
+                    <div className="notice-banner notice-sage">
+                      <CheckSquare size={17} aria-hidden="true" />
+                      <span>
+                        {CHECKLIST_READER_INSTRUCTION} Ticking items here also
+                        pre-fills your exported PDF checkboxes.
+                      </span>
+                    </div>
+
+                    {DOCUMENT_CHECKLIST_GROUPS.map((group) => (
+                      <div key={group.id} className="checklist-group-card">
+                        <div className="checklist-group-head">
+                          <h3>{group.title}</h3>
+                          <p>{group.circumstanceNote}</p>
+                        </div>
+                        {group.items.map((item) => {
+                          const checked = Boolean(
+                            checklistSelections[item.fieldName],
+                          );
+                          return (
+                            <div
+                              key={item.fieldName}
+                              className="checklist-row"
+                            >
+                              <label className="checklist-checkbox-label">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() =>
+                                    toggleChecklistItem(item.fieldName)
+                                  }
+                                />
+                                <span>
+                                  <span className="checklist-item-name">
+                                    {item.label}
+                                  </span>
+                                  <br />
+                                  <span className="checklist-item-note">
+                                    {item.note}
+                                  </span>
+                                </span>
+                              </label>
+                              <span
+                                className={`status-pill${
+                                  item.status === 'If applicable'
+                                    ? ' is-conditional'
+                                    : ''
+                                }`}
+                              >
+                                {item.status}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ))}
+                  </article>
+                )}
+              </section>
+            </div>
+          </>
         )}
       </main>
 
       <footer className="site-footer">
-        <div className="footer-inner">
-          <span>
-            {BRAND_CONFIG.brandName} · Client-side only (no student data stored or
-            transmitted)
-          </span>
-          {contactEntries.length > 0 && (
-            <span>
-              {contactEntries.map((c) => `${c.label}: ${c.value}`).join(' · ')}
-            </span>
-          )}
-        </div>
+        {BRAND_CONFIG.brandName} · Local browser processing · Student data and
+        spreadsheets never leave your device
       </footer>
+
+      {pendingSheetChoice && workbookSession && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="sheet-picker-title"
+          className="modal-backdrop"
+        >
+          <div className="modal-card">
+            <h2 id="sheet-picker-title">Select Course Worksheet</h2>
+            <p className="field-hint">
+              This workbook does not contain a sheet named “Course Data”.
+              Choose which worksheet holds one course per row:
+            </p>
+            <div className="sheet-choice-list">
+              {pendingSheetChoice.map((sheetName) => (
+                <button
+                  key={sheetName}
+                  type="button"
+                  className="sheet-choice-btn"
+                  onClick={() => void applyWorksheet(workbookSession, sheetName)}
+                >
+                  <span>{sheetName}</span>
+                  <ArrowRight size={15} aria-hidden="true" />
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => setPendingSheetChoice(null)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
-
 export default App;

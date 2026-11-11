@@ -2,18 +2,56 @@ import type { InMemoryLogo } from '../types/course';
 
 const MAX_LOGO_BYTES = 5 * 1024 * 1024; // 5 MB safety cap
 
-function renderImageFileToPngBytes(file: File): Promise<Uint8Array> {
+/**
+ * Strips potentially unsafe elements and event handlers from SVG text
+ * before converting it via an isolated Image + Canvas to PNG bytes.
+ * Never injects SVG markup into the active document DOM.
+ */
+export function sanitizeSvgMarkup(rawSvg: string): string {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(rawSvg, 'image/svg+xml');
+  const parserError = doc.querySelector('parsererror');
+  if (parserError || !doc.documentElement || doc.documentElement.tagName.toLowerCase() !== 'svg') {
+    throw new Error('Invalid SVG logo file.');
+  }
+
+  const forbiddenTags = doc.querySelectorAll(
+    'script, foreignObject, iframe, object, embed, link',
+  );
+  forbiddenTags.forEach((node) => node.remove());
+
+  const allElements = doc.querySelectorAll('*');
+  allElements.forEach((el) => {
+    for (const attr of Array.from(el.attributes)) {
+      const name = attr.name.toLowerCase();
+      const val = attr.value.trim().toLowerCase();
+      if (
+        name.startsWith('on') ||
+        ((name === 'href' || name === 'xlink:href') &&
+          (val.startsWith('javascript:') || val.startsWith('data:text/html')))
+      ) {
+        el.removeAttribute(attr.name);
+      }
+    }
+  });
+
+  const serializer = new XMLSerializer();
+  return serializer.serializeToString(doc.documentElement);
+}
+
+export function rasterizeImageBlobToPngBytes(blob: Blob): Promise<Uint8Array> {
   return new Promise((resolve, reject) => {
-    const tempUrl = URL.createObjectURL(file);
+    const tempUrl = URL.createObjectURL(blob);
     const img = new Image();
 
     img.onload = () => {
       try {
         const naturalW = img.naturalWidth || 400;
-        const naturalH = img.naturalHeight || 120;
-        const scale = Math.min(1, 800 / Math.max(naturalW, naturalH));
-        const targetW = Math.max(1, Math.round(naturalW * scale));
-        const targetH = Math.max(1, Math.round(naturalH * scale));
+        const naturalH = img.naturalHeight || 200;
+        const targetMax = 512;
+        const scale = targetMax / Math.max(naturalW, naturalH);
+        const targetW = Math.max(1, Math.round(naturalW * Math.min(2, scale)));
+        const targetH = Math.max(1, Math.round(naturalH * Math.min(2, scale)));
 
         const canvas = document.createElement('canvas');
         canvas.width = targetW;
@@ -25,12 +63,12 @@ function renderImageFileToPngBytes(file: File): Promise<Uint8Array> {
         }
         ctx.drawImage(img, 0, 0, targetW, targetH);
         canvas.toBlob(
-          async (blob) => {
-            if (!blob) {
-              reject(new Error('Could not convert uploaded logo to PNG.'));
+          async (outBlob) => {
+            if (!outBlob) {
+              reject(new Error('Could not convert logo image to PNG.'));
               return;
             }
-            const buf = await blob.arrayBuffer();
+            const buf = await outBlob.arrayBuffer();
             resolve(new Uint8Array(buf));
           },
           'image/png',
@@ -53,9 +91,9 @@ function renderImageFileToPngBytes(file: File): Promise<Uint8Array> {
 }
 
 /**
- * Loads an optional brand logo strictly in browser memory.
- * PNG and JPEG bytes are embedded natively; WebP and SVG are rasterized
- * safely in memory to PNG so pdf-lib can embed them reliably.
+ * Loads an optional brand or university logo strictly in browser memory.
+ * PNG and JPEG bytes are embedded natively; WebP and sanitized SVG are rasterized
+ * safely in memory to crisp PNG bytes so pdf-lib can embed them reliably offline.
  */
 export async function loadLogoInMemory(file: File): Promise<InMemoryLogo> {
   if (file.size === 0) {
@@ -82,14 +120,15 @@ export async function loadLogoInMemory(file: File): Promise<InMemoryLogo> {
   ) {
     mimeType = 'image/jpeg';
     bytes = new Uint8Array(await file.arrayBuffer());
-  } else if (
-    type === 'image/webp' ||
-    type === 'image/svg+xml' ||
-    lowerName.endsWith('.webp') ||
-    lowerName.endsWith('.svg')
-  ) {
+  } else if (type === 'image/svg+xml' || lowerName.endsWith('.svg')) {
+    const rawSvg = await file.text();
+    const cleanSvg = sanitizeSvgMarkup(rawSvg);
+    const svgBlob = new Blob([cleanSvg], { type: 'image/svg+xml' });
     mimeType = 'image/png';
-    bytes = await renderImageFileToPngBytes(file);
+    bytes = await rasterizeImageBlobToPngBytes(svgBlob);
+  } else if (type === 'image/webp' || lowerName.endsWith('.webp')) {
+    mimeType = 'image/png';
+    bytes = await rasterizeImageBlobToPngBytes(file);
   } else {
     throw new Error(
       'Unsupported logo format. Please upload a PNG, JPG, WebP, or SVG image.',
@@ -107,3 +146,8 @@ export async function loadLogoInMemory(file: File): Promise<InMemoryLogo> {
   };
 }
 
+export function revokeLogoPreviewUrl(logo: InMemoryLogo | null | undefined): void {
+  if (logo?.previewUrl?.startsWith('blob:')) {
+    URL.revokeObjectURL(logo.previewUrl);
+  }
+}

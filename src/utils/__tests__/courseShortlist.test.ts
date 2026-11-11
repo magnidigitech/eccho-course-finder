@@ -10,7 +10,13 @@ import {
   GUIDANCE_CHECKED_DATE,
   OFFICIAL_GUIDANCE_LINKS,
 } from '../../config/ukGuide';
-import type { InMemoryLogo, RawCell, WorkbookSheet } from '../../types/course';
+import type {
+  CourseRecord,
+  InMemoryLogo,
+  RawCell,
+  UniversityLogoMap,
+  WorkbookSheet,
+} from '../../types/course';
 import {
   buildWorkbookSession,
   ExcelValidationError,
@@ -22,6 +28,7 @@ import {
   generateCourseShortlistPdf,
   type FontBytesBundle,
 } from '../pdfGenerator';
+import { getUniversityInitials } from '../universityLogos';
 import {
   buildShortlistFilename,
   formatTuitionFee,
@@ -60,6 +67,52 @@ function loadNodeDefaultLogo(): InMemoryLogo {
     bytes: logoBytes,
     previewUrl: '',
   };
+}
+
+function loadNodeUniversityLogos(courses: CourseRecord[]): UniversityLogoMap {
+  const fileByDomain: Record<string, string> = {
+    'sussex.ac.uk': 'sussex.png',
+    'uel.ac.uk': 'uel.png',
+    'brookes.ac.uk': 'brookes.png',
+    'le.ac.uk': 'leicester.png',
+    'coventry.ac.uk': 'coventry.png',
+    'northumbria.ac.uk': 'northumbria.png',
+  };
+  const map: UniversityLogoMap = {};
+  for (const c of courses) {
+    if (map[c.universityKey]) continue;
+    const host = c.websiteHref ? new URL(c.websiteHref).hostname.replace(/^www\./, '') : null;
+    const matchedFile = host ? fileByDomain[host] : undefined;
+    if (matchedFile) {
+      const fullPath = path.resolve(process.cwd(), 'src/assets/universities', matchedFile);
+      const bytes = new Uint8Array(fs.readFileSync(fullPath));
+      map[c.universityKey] = {
+        universityKey: c.universityKey,
+        universityName: c.university,
+        websiteHref: c.websiteHref,
+        domain: host,
+        initials: getUniversityInitials(c.university),
+        source: 'packaged',
+        logo: {
+          fileName: matchedFile,
+          mimeType: 'image/png',
+          bytes,
+          previewUrl: '',
+        },
+      };
+    } else {
+      map[c.universityKey] = {
+        universityKey: c.universityKey,
+        universityName: c.university,
+        websiteHref: c.websiteHref,
+        domain: host,
+        initials: getUniversityInitials(c.university),
+        source: 'initials',
+        logo: null,
+      };
+    }
+  }
+  return map;
 }
 
 const LOCAL_SAMPLE_XLSX = path.resolve(
@@ -220,12 +273,29 @@ describe('Excel parsing & edge cases', () => {
 
     const courses = parseCoursesFromSheet(session.sheets, session.selectedSheet);
     expect(courses).toHaveLength(2);
-    expect(courses[0].universityRanking).toBe('1');
+    expect('universityRanking' in courses[0]).toBe(false);
     expect(courses[0].faculty).toBeNull();
     expect(formatTuitionFee(courses[0].yearlyTuitionFee, 'GBP')).toBe('£28,100');
+    expect(courses[0].englishTests.map((t) => t.key)).toEqual([
+      'ielts',
+      'pte',
+      'toefl',
+      'duolingo',
+    ]);
     expect(courses[1].englishTests.find((t) => t.label === 'TOEFL')?.value).toBe(
       '89 or 4',
     );
+    expect(
+      courses[0].englishWaivers.find((w) => w.key === 'waiverUk')?.value,
+    ).toBe('0');
+  });
+
+  it('derives graceful university initials placeholders without domain confusion', () => {
+    expect(getUniversityInitials('University of Sussex')).toBe('US');
+    expect(getUniversityInitials('University of East London')).toBe('UEL');
+    expect(getUniversityInitials('Oxford Brookes University')).toBe('OB');
+    expect(getUniversityInitials('Coventry University')).toBe('CU');
+    expect(getUniversityInitials('Northumbria University Newcastle Campus')).toBe('NU');
   });
 
   it.runIf(HAS_LOCAL_SAMPLE)(
@@ -257,14 +327,15 @@ describe('Excel parsing & edge cases', () => {
   });
 });
 
-describe('Personalized PDF generation, clickable navigation & interactive checkboxes', () => {
-  it('generates course pages followed by UK Application Process and Required Documents Checklist with internal GoTo links, external official links, and interactive checkboxes', async () => {
+describe('Redesigned personalised PDF generation, summary index, links & interactive checkboxes', () => {
+  it('generates Summary page(s), one course per page without removed fields, UK Application Process, and Interactive Checklist', async () => {
     const sheets = HAS_LOCAL_SAMPLE
       ? await readLocalWorkbook()
       : buildFixtureWorkbook();
     const session = buildWorkbookSession('courses.xlsx', sheets);
     const courses = parseCoursesFromSheet(session.sheets, session.selectedSheet);
     const studentName = "Aarav O'Connor";
+    const universityLogos = loadNodeUniversityLogos(courses);
 
     const result = await generateCourseShortlistPdf({
       courses,
@@ -274,6 +345,7 @@ describe('Personalized PDF generation, clickable navigation & interactive checkb
         doc_app_passport_copy: true,
         doc_visa_tb_certificate: true,
       },
+      universityLogos,
       logo: loadNodeDefaultLogo(),
       fontBytes: loadNodeFontBytes(),
     });
@@ -281,8 +353,10 @@ describe('Personalized PDF generation, clickable navigation & interactive checkb
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
+    expect(result.summaryPageCount).toBe(1);
+    expect(result.courseStartPage).toBe(2);
     expect(result.coursePageCount).toBe(courses.length);
-    expect(result.guideStartPage).toBe(courses.length + 1);
+    expect(result.guideStartPage).toBe(1 + courses.length + 1);
     expect(result.checklistStartPage).toBeGreaterThan(result.guideStartPage);
     expect(result.pageCount).toBeGreaterThanOrEqual(result.checklistStartPage);
 
@@ -290,9 +364,41 @@ describe('Personalized PDF generation, clickable navigation & interactive checkb
       .promise;
     expect(pdf.numPages).toBe(result.pageCount);
 
-    // 1. Verify course pages (Pages 1..N)
-    for (let i = 1; i <= result.coursePageCount; i += 1) {
-      const page = await pdf.getPage(i);
+    // 0. Verify Page 1 Personalised Summary
+    const summaryPage = await pdf.getPage(1);
+    const summaryText = (await summaryPage.getTextContent()).items
+      .map((item) => ('str' in item ? item.str : ''))
+      .join(' ');
+    expect(summaryText).toContain('Your Personalised Course Shortlist');
+    expect(summaryText).toContain(`Prepared for ${studentName}`);
+    expect(summaryText).toContain(`${courses.length} courses`);
+    expect(summaryText).toContain('View course');
+    expect(summaryText).toContain(`Page 1 of ${result.pageCount}`);
+    for (const c of courses) {
+      expect(summaryText).toContain(c.university);
+      expect(summaryText).toContain(c.programName);
+    }
+
+    const summaryAnnots = await summaryPage.getAnnotations();
+    const summaryLinkTargets: number[] = [];
+    for (const a of summaryAnnots as Array<{ subtype?: string; dest?: unknown[] }>) {
+      if (a.subtype === 'Link' && Array.isArray(a.dest) && a.dest[0]) {
+        const idx = await pdf.getPageIndex(
+          a.dest[0] as Parameters<typeof pdf.getPageIndex>[0],
+        );
+        summaryLinkTargets.push(idx + 1);
+      }
+    }
+    for (let i = 0; i < courses.length; i += 1) {
+      expect(summaryLinkTargets).toContain(result.courseStartPage + i);
+    }
+    expect(summaryLinkTargets).toContain(result.guideStartPage);
+    expect(summaryLinkTargets).toContain(result.checklistStartPage);
+
+    // 1. Verify course pages (Pages courseStartPage .. courseStartPage + N - 1)
+    for (let i = 0; i < result.coursePageCount; i += 1) {
+      const pageNum = result.courseStartPage + i;
+      const page = await pdf.getPage(pageNum);
       const viewport = page.getViewport({ scale: 1 });
       expect(Math.round(viewport.width)).toBe(Math.round(A4_WIDTH_PT));
       expect(Math.round(viewport.height)).toBe(Math.round(A4_HEIGHT_PT));
@@ -301,12 +407,31 @@ describe('Personalized PDF generation, clickable navigation & interactive checkb
         .map((item) => ('str' in item ? item.str : ''))
         .join(' ');
       expect(joined).toContain(`Prepared for ${studentName}`);
-      expect(joined).toContain(`Page ${i} of ${result.pageCount}`);
+      expect(joined).toContain(`Page ${pageNum} of ${result.pageCount}`);
+      expect(joined).toContain('Back to shortlist');
       expect(joined).toContain('UK Application Process');
-      expect(joined).toContain('Required Documents Checklist');
-      expect(joined).toContain(courses[i - 1].programName);
+      expect(joined).toContain('Documents Checklist');
+      expect(joined).toContain(courses[i].programName);
+      expect(joined).toContain('IELTS');
+      expect(joined).toContain('PTE');
+      expect(joined).toContain('TOEFL');
+      expect(joined).toContain('Duolingo');
+      expect(joined).toContain('Waiver criteria');
 
-      // Verify internal GoTo links resolve to exact Guide and Checklist start pages
+      // Removed fields must NEVER appear on course pages
+      for (const removed of [
+        'University Ranking',
+        'As provided',
+        'ELLT',
+        'ESOL',
+        'Kaplan',
+        'Language Certificate Academic SELT',
+        'Skills For English',
+      ]) {
+        expect(joined).not.toContain(removed);
+      }
+
+      // Verify internal GoTo links jump back to summary Page 1 and toolkit pages
       const annots = await page.getAnnotations();
       const destPages: number[] = [];
       for (const a of annots as Array<{ subtype?: string; dest?: unknown[] }>) {
@@ -317,6 +442,7 @@ describe('Personalized PDF generation, clickable navigation & interactive checkb
           destPages.push(targetIdx + 1);
         }
       }
+      expect(destPages).toContain(1);
       expect(destPages).toContain(result.guideStartPage);
       expect(destPages).toContain(result.checklistStartPage);
     }

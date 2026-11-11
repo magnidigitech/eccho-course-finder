@@ -1,55 +1,59 @@
-# Eccho Overseas — Personalized Course Shortlist & UK Guide PDF Generator
+# Eccho Overseas — Personalised Course Shortlist & UK Guide PDF Generator
 
-Client-side React + TypeScript web application for **Eccho Overseas** that converts an uploaded Excel course workbook into a branded, personalized A4 portrait PDF containing:
+Client-side React + TypeScript application for **Eccho Overseas** (deployable as a static web app on **Vercel** or packaged as a **Manifest V3 Chrome Extension**) that converts an uploaded Excel course workbook into a branded A4 portrait PDF:
 
-1. **Course Shortlist**: exactly one course per page.
-2. **UK Application Process**: numbered step-by-step guide distinguishing university admissions from UK Student visa (UKVI) requirements, with verified clickable official GOV.UK and UKCISA links.
-3. **Required Documents Checklist**: interactive AcroForm PDF checkboxes organized across University application, CAS preparation, UK Student visa, and Before travel.
+1. **Personalised Summary (`Your Personalised Course Shortlist`)**: Prepared for the student with course, university, and destination counts, fixed-frame university logos, and `"View course ->"` internal PDF links to each course page.
+2. **Individual Course Pages (1 course per A4 page)**: University identity, overview, two-panel tuition & scholarship summary, academic entry requirements, English language requirements (`IELTS`, `PTE`, `TOEFL`, `Duolingo`), waiver criteria (`Class 12 CBSE/ICSE`, `UK qualification`, `Class 12 State Board`), toolkit quick links, and clickable university website footer.
+3. **UK Application Process**: 6-step guide distinguishing university admissions from UK Student visa (UKVI) rules, with clickable official GOV.UK and UKCISA links.
+4. **Required Documents Checklist**: Interactive AcroForm PDF checkboxes across University application, CAS preparation, UK Student visa, and Before travel.
 
-All Excel parsing, validation, PDF generation, checklist state, and live PDF preview rendering run strictly in browser memory—with zero backend calls, zero file uploads, and zero browser persistence (`localStorage`, `sessionStorage`, `IndexedDB`, or service-worker data caching).
+All Excel parsing, validation, PDF generation, checklist state, and live PDF preview rendering run strictly in memory—with zero backend calls, zero file uploads, and zero web `localStorage`, `sessionStorage`, `IndexedDB`, or service-worker data caching. Inside Chrome extension tabs only, `chrome.storage.session` keeps your active tab working state intact during preview navigation and clears automatically on **Reset** or when the extension tab closes.
 
 ## Key Features
 
-- **Student Personalisation & Green Brand Theme (`#3d8a3a`)**
-  - Required **Student Name** field above the Excel upload personalizes every PDF header (`Prepared for [Student Name]`), the UK guide and checklist pages, and the sanitized download filename (`Eccho_Overseas_[Student_Name]_Course_Shortlist.pdf`).
-  - Uses the bundled **Eccho Overseas** green logo (`src/assets/eccho-logo.png`) on both the portal and PDF (with optional in-memory override) and the `#3d8a3a` green theme throughout.
+- **Student Personalisation & Clean White / Charcoal / Forest-Green (`#3d8a3a`) Design**
+  - Required **Student Name** field personalises headers (`Prepared for [Student Name]`), the summary, toolkit pages, and the sanitised download filename (`Eccho_Overseas_[Student_Name]_Course_Shortlist.pdf`).
+  - Uses the bundled **Eccho Overseas** PNG logo (`src/assets/eccho-logo.png`), Lucide outline icons, and bundled Inter fonts.
 - **Authoritative Excel Parsing (`.xlsx`)**
-  - Automatically detects and reads **Course Data** when present and never imports **Comparison** as course rows.
-  - Allows worksheet selection for other workbooks and validates required columns (**Program Name** and **University**) after trimming whitespace and normalizing case.
-  - Preserves original course order, duplicates, zero (`0`), decimals (`6.5`), mixed text/numeric scores (`89 or 4`, `B2`), and full scholarship/requirement text; renders blanks, em dashes (`—`), and `N/A` as **Not specified**.
-  - Automatically confirms **GBP** when explicitly specified in the workbook (`COST & FUNDING (GBP)`) and requires currency selection before export when unspecified.
+  - Reads **Course Data** automatically when present and never imports **Comparison** as additional course rows.
+  - Excludes removed fields (`University Ranking`, `ELLT`, `ESOL`, `Kaplan Test of English`, `Language Certificate Academic SELT`, `Skills For English`).
+  - Preserves source order, duplicates, zero (`0`) waiver values, decimals, mixed text/numeric scores, and full descriptions.
+- **University Logos Management**
+  - Resolves verified packaged logos once per unique university (`src/assets/universities/`), with graceful initials placeholders, per-university manual upload/replace, optional user-triggered website lookup (never sending spreadsheet/student data), and restore controls.
 - **Clickable PDF Navigation & Interactive Checkboxes**
-  - Course pages link directly via internal PDF `GoTo` annotations to **UK Application Process** and **Required Documents Checklist**; guide and checklist pages link back via **Back to Course Shortlist**.
-  - Pre-export checklist selections carry into unique, accessible AcroForm PDF checkbox fields (`/TU` labels) that can be ticked, unticked, and saved in compatible PDF readers.
-  - Strict single-page A4 fitting (`>= 9 pt` body text) blocks export with a clear course error if any course overflows one page.
-- **Live PDF Preview & Reset**
-  - Previews render directly from the generated PDF bytes via `pdfjs-dist` with clickable external and internal page links.
-  - **Reset** clears Student Name, uploaded Excel file, parsed data, checklist selections, logo overrides, object URLs, and preview.
+  - Summary rows jump directly to each course page via internal PDF `/GoTo` annotations; course, guide, and checklist pages link cleanly back to the summary and each other.
+  - Strict single-page A4 course layout fitting (`>= 9 pt` body text) blocks export with a clear error if any course overflows one page.
 
-## Brand & Guide Configuration
-
-- Brand name, `#3d8a3a` color tokens, bundled logo path, and optional contact details: `src/config/brand.ts`
-- Bundled UK Application Process steps, official guidance links, checked date, and Required Documents Checklist items: `src/config/ukGuide.ts`
-
-## Local Development
+## Local Development & Verification
 
 ```bash
 npm install
 npm run dev
 ```
 
-Run checks and tests:
+Run verification suite:
 
 ```bash
 npm run typecheck
 npm test
 npm run build
+npm run build:extension
 ```
 
 ## Deploying to Vercel
 
-This is a static Vite SPA (`vercel.json` included):
+1. Import this repository in Vercel.
+2. Keep the default Vite settings (`npm run build`, output directory `dist`).
+3. Deploy — no environment variables or backend services are needed (`vercel.json` included).
 
-1. Push to GitHub and import the repository in Vercel.
-2. Use the default Vite settings (`npm run build`, output directory `dist`).
-3. Deploy—no environment variables or backend services are needed.
+## Loading as a Chrome Extension (Manifest V3)
+
+1. Build the local extension bundle (all scripts, fonts, workers, and assets bundled locally with no remote CDN code):
+
+   ```bash
+   npm run build:extension
+   ```
+
+2. Open `chrome://extensions` in Google Chrome and enable **Developer mode**.
+3. Click **Load unpacked** and select the generated `dist-extension` folder.
+4. Click the **Eccho Overseas Course Shortlist** toolbar icon to launch the converter in a full browser tab.
